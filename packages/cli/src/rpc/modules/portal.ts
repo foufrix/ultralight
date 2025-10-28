@@ -1275,8 +1275,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<{ success?: boolean[]; declined?: boolean; failed?: boolean }> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as PrefixedHexString))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as PrefixedHexString))
     const enr = ENR.decodeTxt(enrHex)
 
     try {
@@ -1299,8 +1299,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<{ success?: boolean[]; declined?: boolean; failed?: boolean }> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as PrefixedHexString))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as PrefixedHexString))
     const enr = ENR.decodeTxt(enrHex)
 
     try {
@@ -1323,8 +1323,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<{ success?: boolean[]; declined?: boolean; failed?: boolean }> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as PrefixedHexString))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as PrefixedHexString))
     const enr = ENR.decodeTxt(enrHex)
 
     try {
