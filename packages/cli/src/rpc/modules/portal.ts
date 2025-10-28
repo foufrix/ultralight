@@ -1203,8 +1203,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<string | ReturnType<typeof this._history.sendOffer>> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0]))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1]))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
     const enr = ENR.decodeTxt(enrHex)
     if (this._history.routingTable.getWithPending(enr.nodeId)?.value === undefined) {
       const res = await this._history.sendPing(enr)
@@ -1219,8 +1219,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<string | ReturnType<typeof this._state.sendOffer>> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0]))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1]))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
     const enr = ENR.decodeTxt(enrHex)
     if (this._state.routingTable.getWithPending(enr.nodeId)?.value === undefined) {
       const res = await this._state.sendPing(enr)
@@ -1235,8 +1235,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<string | ReturnType<typeof this._beacon.sendOffer>> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0]))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1]))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
     const enr = ENR.decodeTxt(enrHex)
     if (this._beacon.routingTable.getWithPending(enr.nodeId)?.value === undefined) {
       const res = await this._beacon.sendPing(enr)
@@ -1253,8 +1253,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<{ success?: boolean[]; declined?: boolean; failed?: boolean }> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0]))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1]))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
     const enr = ENR.decodeTxt(enrHex)
 
     try {
@@ -1277,8 +1277,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<{ success?: boolean[]; declined?: boolean; failed?: boolean }> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0]))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1]))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
     const enr = ENR.decodeTxt(enrHex)
 
     try {
@@ -1301,8 +1301,8 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<{ success?: boolean[]; declined?: boolean; failed?: boolean }> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0]))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1]))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
     const enr = ENR.decodeTxt(enrHex)
 
     try {
