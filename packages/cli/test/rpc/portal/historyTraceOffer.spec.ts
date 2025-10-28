@@ -85,7 +85,7 @@ describe(`${method} tests`, () => {
       }
     } catch (error) {
       console.log('Trace offer success error:', error)
-      assert.ok(true, 'error is acceptable for success test')
+      assert.ok(false, 'error is unacceptable for success test')
     }
   }, 20000)
 
