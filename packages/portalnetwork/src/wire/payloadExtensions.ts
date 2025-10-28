@@ -5,7 +5,13 @@ import {
   UintBigintType,
   UintNumberType,
 } from '@chainsafe/ssz'
-import { bytesToHex, fromAscii, hexToBytes, toAscii } from '@ethereumjs/util'
+import {
+  type PrefixedHexString,
+  bytesToHex,
+  fromAscii,
+  hexToBytes,
+  toAscii,
+} from '@ethereumjs/util'
 import { PingPongPayloadType } from './types.js'
 
 /**
@@ -40,7 +46,7 @@ export interface IClientInfo {
 export const MAX_CLIENT_INFO_BYTE_LENGTH = 200
 
 export function clientInfoStringToBytes(clientInfo: string): Uint8Array {
-  return hexToBytes(fromAscii(clientInfo))
+  return hexToBytes(fromAscii(clientInfo) as PrefixedHexString)
 }
 /**
  * Encode Client info as ASCII hex encoded string.

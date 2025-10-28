@@ -1,14 +1,14 @@
-import { EventEmitter } from 'eventemitter3'
 import { Discv5 } from '@chainsafe/discv5'
 import { ENR } from '@chainsafe/enr'
 import { bytesToHex, hexToBytes } from '@ethereumjs/util'
 import type { Multiaddr } from '@multiformats/multiaddr'
 import { fromNodeAddress } from '@multiformats/multiaddr'
 import debug from 'debug'
-import packageJson from '../../package.json' assert { type: 'json' }
+import { EventEmitter } from 'eventemitter3'
+import packageJson from '../../package.json' with { type: 'json' }
 
 import { HistoryNetwork } from '../networks/history/history.js'
-import { BeaconNetwork, NetworkId, StateNetwork, SyncStrategy } from '../networks/index.js'
+import { NetworkId, type SubNetwork } from '../networks/index.js'
 import { PortalNetworkUTP } from '../wire/utp/PortalNetworkUtp/index.js'
 
 import { DBManager } from './dbManager.js'
@@ -19,21 +19,25 @@ import type { IDiscv5CreateOptions } from '@chainsafe/discv5'
 import type { ITalkReqMessage, ITalkRespMessage } from '@chainsafe/discv5/message'
 import type { Debugger } from 'debug'
 import type { BaseNetwork } from '../networks/network.js'
-import type {
-  INodeAddress,
-  PortalNetworkEvents,
-  PortalNetworkMetrics,
-  PortalNetworkOpts,
-} from './types.js'
-import { MessageCodes, PortalWireMessageType } from '../wire/types.js'
-import { type IClientInfo } from '../wire/payloadExtensions.js'
 import type { RateLimiter } from '../transports/rateLimiter.js'
+import type { IClientInfo } from '../wire/payloadExtensions.js'
+import type { Version } from '../wire/types.js'
+import { MessageCodes, PortalWireMessageType } from '../wire/types.js'
 import { ENRCache } from './enrCache.js'
+import {
+  ChainId,
+  type INodeAddress,
+  type PortalNetworkEvents,
+  type PortalNetworkMetrics,
+  type PortalNetworkOpts,
+} from './types.js'
+import { createNetwork } from '../networks/constructor.js'
 
 export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
   clientInfo: IClientInfo
   eventLog: boolean
   discv5: Discv5
+  chainId: ChainId
   networks: Map<NetworkId, BaseNetwork>
   uTP: PortalNetworkUTP
   utpTimout: number
@@ -43,7 +47,7 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
   logger: Debugger
   ETH: ETH
   enrCache: ENRCache
-  shouldRefresh: boolean = true
+  shouldRefresh = true
 
   /**
    *
@@ -51,8 +55,8 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
    * @param opts a dictionary of `PortalNetworkOpts`
    */
   constructor(opts: PortalNetworkOpts) {
-    // eslint-disable-next-line constructor-super
     super()
+    this.chainId = opts.chainId ?? ChainId.MAINNET
     this.clientInfo = {
       clientName: 'ultralight',
       clientVersionAndShortCommit: `${packageJson.version}-${opts.shortCommit ?? ''}`,
@@ -75,57 +79,24 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
       this.logger,
       async () => opts.dbSize(opts.dataDir ?? './'),
       opts.db,
-    ) as DBManager
+    )
     opts.supportedNetworks = opts.supportedNetworks ?? []
     for (const network of opts.supportedNetworks) {
-      switch (network.networkId) {
-        case NetworkId.HistoryNetwork:
-          this.networks.set(
-            network.networkId,
-            new HistoryNetwork({
-              client: this,
-              networkId: NetworkId.HistoryNetwork,
-              maxStorage: network.maxStorage,
-              db: network.db,
-              gossipCount: opts.gossipCount,
-              dbSize: async () => opts.dbSize((opts.dataDir ?? '.') + '/history'),
-            }),
-          )
-          break
-        case NetworkId.StateNetwork:
-          this.networks.set(
-            network.networkId,
-            new StateNetwork({
-              client: this,
-              networkId: NetworkId.StateNetwork,
-              maxStorage: network.maxStorage,
-              db: network.db,
-              gossipCount: opts.gossipCount,
-              dbSize: async () => opts.dbSize((opts.dataDir ?? '.') + '/state'),
-            }),
-          )
-          break
-        case NetworkId.BeaconChainNetwork:
-          {
-            const syncStrategy =
-              opts.trustedBlockRoot !== undefined
-                ? SyncStrategy.TrustedBlockRoot
-                : SyncStrategy.PollNetwork
-            this.networks.set(
-              network.networkId,
-              new BeaconNetwork({
-                client: this,
-                networkId: NetworkId.BeaconChainNetwork,
-                maxStorage: network.maxStorage,
-                trustedBlockRoot: opts.trustedBlockRoot,
-                sync: syncStrategy,
-                db: network.db,
-                gossipCount: opts.gossipCount,
-                dbSize: async () => opts.dbSize((opts.dataDir ?? '.') + '/beacon'),
-              }),
-            )
-          }
-          break
+      try {
+        const networkInstance = createNetwork(network.networkId, {
+          client: this,
+          maxStorage: network.maxStorage,
+          db: network.db,
+          gossipCount: opts.gossipCount,
+          dbSize: (dir: string) => opts.dbSize(dir),
+          trustedBlockRoot: opts.trustedBlockRoot ? hexToBytes(opts.trustedBlockRoot as `0x${string}`) : undefined,
+          dataDir: opts.dataDir,
+        })
+        this.networks.set(network.networkId, networkInstance)
+      } catch (err: any) {
+        this.logger.extend('error')(
+          `Failed to initialize network ${network.networkId}: ${err.message}`,
+        )
       }
     }
     for (const network of this.networks.values()) {
@@ -178,7 +149,7 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
         // Check for stored radius in db
         const storedRadius = await network.db.db.get('radius')
         await network.setRadius(BigInt(storedRadius))
-      } catch {
+      } catch (err) {
         // No action
       }
       if (network instanceof HistoryNetwork) {
@@ -216,25 +187,12 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
     }
   }
 
-  public network = (): {
-    [NetworkId.HistoryNetwork]: HistoryNetwork | undefined
-    [NetworkId.StateNetwork]: StateNetwork | undefined
-    [NetworkId.BeaconChainNetwork]: BeaconNetwork | undefined
-  } => {
-    const history = this.networks.get(NetworkId.HistoryNetwork)
-      ? (this.networks.get(NetworkId.HistoryNetwork) as HistoryNetwork)
-      : undefined
-    const state = this.networks.get(NetworkId.StateNetwork)
-      ? (this.networks.get(NetworkId.StateNetwork) as StateNetwork)
-      : undefined
-    const beacon = this.networks.get(NetworkId.BeaconChainNetwork)
-      ? (this.networks.get(NetworkId.BeaconChainNetwork) as BeaconNetwork)
-      : undefined
-    return {
-      [NetworkId.HistoryNetwork]: history,
-      [NetworkId.StateNetwork]: state,
-      [NetworkId.BeaconChainNetwork]: beacon,
+  public network(): Partial<Record<NetworkId, SubNetwork<NetworkId> | undefined>> {
+    const networks: Partial<Record<NetworkId, SubNetwork<NetworkId> | undefined>> = {}
+    for (const [networkId, network] of this.networks.entries()) {
+      networks[networkId] = network as SubNetwork<NetworkId>
     }
+    return networks
   }
 
   /**
@@ -242,7 +200,7 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
    * @param namespaces comma separated list of logging namespaces
    * defaults to "*Portal*,*uTP*"
    */
-  public enableLog = (namespaces: string = '*Portal*,*uTP*,*discv5*') => {
+  public enableLog = (namespaces = '*Portal*,*uTP*,*discv5*') => {
     debug.enable(namespaces)
   }
 
@@ -266,12 +224,12 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
         {
           type: 'put',
           key: 'privateKey',
-          value: bytesToHex(this.discv5.enr.privateKey!),
+          value: bytesToHex(this.discv5.enr.privateKey),
         },
         {
           type: 'put',
           key: 'publicKey',
-          value: bytesToHex(this.discv5.enr.publicKey!),
+          value: bytesToHex(this.discv5.enr.publicKey),
         },
         {
           type: 'put',
@@ -346,6 +304,7 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
     payload: Uint8Array,
     networkId: NetworkId,
     utpMessage?: boolean,
+    version: Version = 0,
   ): Promise<Uint8Array> => {
     const messageNetwork = utpMessage !== undefined ? NetworkId.UTPNetwork : networkId
     const remote =
@@ -363,7 +322,7 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
           `Error sending uTP TALKREQ message using ${enr instanceof ENR ? 'ENR' : 'MultiAddr'}: ${err.message}`,
         )
       } else {
-        const messageType = PortalWireMessageType.deserialize(payload).selector
+        const messageType = PortalWireMessageType[version].deserialize(payload).selector
         throw new Error(
           `Error sending TALKREQ ${MessageCodes[messageType]} message using ${enr instanceof ENR ? 'ENR' : 'MultiAddr'}: ${err}.  NetworkId: ${networkId} NodeId: ${enr.nodeId} MultiAddr: ${enr instanceof ENR ? enr.getLocationMultiaddr('udp')?.toString() : enr.socketAddr.toString()}`,
         )
@@ -373,11 +332,11 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
 
   public sendPortalNetworkResponse = async (
     src: INodeAddress,
-    requestId: bigint,
+    requestId: Uint8Array,
     payload: Uint8Array,
   ) => {
     this.eventLog &&
-      this.emit('SendTalkResp', src.nodeId, requestId.toString(16), bytesToHex(payload))
+      this.emit('SendTalkResp', src.nodeId, bytesToHex(requestId), bytesToHex(payload))
     try {
       await this.discv5.sendTalkResp(src, requestId, payload)
     } catch (err: any) {
@@ -388,7 +347,6 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
   }
 
   public addToBlackList = (ma: Multiaddr) => {
-    // eslint-disable-next-line no-extra-semi
     ;(<RateLimiter>(<any>this.discv5.sessionService.transport)['rateLimiter']).addToBlackList(
       ma.nodeAddress().address,
     )
@@ -401,7 +359,6 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
   }
 
   public removeFromBlackList = (ma: Multiaddr) => {
-    // eslint-disable-next-line no-extra-semi
     ;(<RateLimiter>(<any>this.discv5.sessionService.transport)['rateLimiter']).removeFromBlackList(
       ma.nodeAddress().address,
     )
@@ -409,9 +366,13 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
 
   public updateENRCache = (enrs: ENR[]) => {
     for (const enr of enrs) {
-      this.highestCommonVersion(enr).finally(() => {
-        this.enrCache.updateENR(enr)
-      })
+      this.highestCommonVersion(enr)
+        .catch((e: any) => {
+          this.logger.extend('error')(e.message)
+        })
+        .finally(() => {
+          this.enrCache.updateENR(enr)
+        })
     }
   }
 
@@ -441,7 +402,7 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
       // No action
     }
   }
-  public async highestCommonVersion(peer: ENR): Promise<number> {
+  public async highestCommonVersion(peer: ENR): Promise<Version> {
     const mySupportedVersions: number[] = SupportedVersions.deserialize(
       this.discv5.enr.kvs.get('pv')!,
     )
@@ -455,8 +416,8 @@ export class PortalNetwork extends EventEmitter<PortalNetworkEvents> {
       .sort((a, b) => b - a)[0]
     if (highestCommonVersion === undefined) {
       this.addToBlackList(peer.getLocationMultiaddr('udp')!)
-      return -1
+      throw new Error(`No common version found with ${peer.nodeId}`)
     }
-    return highestCommonVersion
+    return highestCommonVersion as Version
   }
 }

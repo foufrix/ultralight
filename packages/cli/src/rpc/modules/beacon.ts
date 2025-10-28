@@ -1,4 +1,4 @@
-import { hexToBytes } from '@ethereumjs/util'
+import { type PrefixedHexString, hexToBytes } from '@ethereumjs/util'
 import { RunStatusCode } from '@lodestar/light-client'
 import { ssz } from '@lodestar/types'
 import {
@@ -7,6 +7,7 @@ import {
   ContentLookup,
   LightClientUpdatesByRangeKey,
   NetworkId,
+  NetworkIdByChain,
   type PortalNetwork,
   computeLightClientKeyFromPeriod,
   getBeaconContentKey,
@@ -31,7 +32,7 @@ export class beacon {
    * @param rpcManager RPC client to which the module binds
    */
   constructor(client: PortalNetwork, logger: Debugger) {
-    this._beacon = client.networks.get(NetworkId.BeaconChainNetwork) as BeaconNetwork
+    this._beacon = client.networks.get(NetworkIdByChain[client.chainId].BeaconChainNetwork) as BeaconNetwork
     this.logger = logger.extend('beacon')
 
     this.methods = middleware(this.methods.bind(this), 0, [])
@@ -63,7 +64,7 @@ export class beacon {
     }
 
     return ssz.capella.LightClientHeader.toJson(
-      this._beacon.lightClient!.getHead() as capella.LightClientHeader,
+      this._beacon.lightClient.getHead() as capella.LightClientHeader,
     )
   }
 
@@ -82,7 +83,7 @@ export class beacon {
       }
     }
     return ssz.capella.LightClientHeader.toJson(
-      this._beacon.lightClient!.getFinalized() as capella.LightClientHeader,
+      this._beacon.lightClient.getFinalized() as capella.LightClientHeader,
     )
   }
 
@@ -90,12 +91,12 @@ export class beacon {
     const period = Number(BigInt(params[0]))
     const rangeKey = getBeaconContentKey(
       BeaconNetworkContentType.LightClientUpdate,
-      hexToBytes(computeLightClientKeyFromPeriod(period)),
+      hexToBytes(computeLightClientKeyFromPeriod(period) as PrefixedHexString),
     )
     const update = await this._beacon.retrieve(rangeKey)
     if (update !== undefined) {
       return ssz.capella.LightClientUpdate.toJson(
-        ssz.capella.LightClientUpdate.deserialize(hexToBytes(update)),
+        ssz.capella.LightClientUpdate.deserialize(hexToBytes(update as PrefixedHexString)),
       )
     }
     const lookup = new ContentLookup(

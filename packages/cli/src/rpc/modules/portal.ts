@@ -1,10 +1,17 @@
 import { EntryStatus, distance } from '@chainsafe/discv5'
 import { ENR } from '@chainsafe/enr'
-import { bigIntToHex, bytesToHex, hexToBytes, short } from '@ethereumjs/util'
+import {
+  type PrefixedHexString,
+  bigIntToHex,
+  bytesToHex,
+  hexToBytes,
+  short,
+} from '@ethereumjs/util'
 import {
   ContentLookup,
   FoundContent,
   NetworkId,
+  NetworkIdByChain,
   NodeLookup,
   decodeExtensionPayloadToJson,
   encodeExtensionPayloadFromJson,
@@ -16,6 +23,7 @@ import { content_params } from '../schema/index.js'
 import { callWithStackTrace, isValidId } from '../util.js'
 import { middleware, validators } from '../validators.js'
 
+import { BitArray } from '@chainsafe/ssz'
 import { RunStatusCode } from '@lodestar/light-client'
 import type { Debugger } from 'debug'
 import type { BeaconNetwork, HistoryNetwork, PortalNetwork, StateNetwork } from 'portalnetwork'
@@ -112,7 +120,7 @@ const methods = [
   'portal_historyAddBootNode',
   'portal_historyNodeInfo',
   'portal_beaconAddBootNode',
-  `portal_beaconStartLightClient`,
+  'portal_beaconStartLightClient',
 ]
 
 export class portal {
@@ -124,9 +132,9 @@ export class portal {
 
   constructor(client: PortalNetwork, logger: Debugger) {
     this._client = client
-    this._history = this._client.networks.get(NetworkId.HistoryNetwork) as HistoryNetwork
-    this._beacon = this._client.networks.get(NetworkId.BeaconChainNetwork) as BeaconNetwork
-    this._state = this._client.networks.get(NetworkId.StateNetwork) as StateNetwork
+    this._history = this._client.networks.get(NetworkIdByChain[client.chainId].HistoryNetwork) as HistoryNetwork
+    this._beacon = this._client.networks.get(NetworkIdByChain[client.chainId].BeaconChainNetwork) as BeaconNetwork
+    this._state = this._client.networks.get(NetworkIdByChain[client.chainId].StateNetwork) as StateNetwork
     this.logger = logger
     this.methods = middleware(this.methods.bind(this), 0, [])
 
@@ -338,7 +346,7 @@ export class portal {
 
   // portal_*NodeInfo
   async historyNodeInfo() {
-    this.logger(`historyNodeInfo request received`)
+    this.logger('historyNodeInfo request received')
     try {
       const enr = this._client.discv5.enr.encodeTxt()
       const nodeId = this._client.discv5.enr.nodeId
@@ -349,7 +357,7 @@ export class portal {
   }
 
   async historyRoutingTableENRs(_params: []): Promise<any> {
-    this.logger(`portal_historyRoutingTableENRS request received.`)
+    this.logger('portal_historyRoutingTableENRS request received.')
     const { buckets } = await this._history.routingTableInfo()
     return {
       buckets: buckets.map((bucket) =>
@@ -364,7 +372,7 @@ export class portal {
   }
   // portal_*RoutingTableInfo
   async historyRoutingTableInfo(_params: []): Promise<any> {
-    this.logger(`portal_historyRoutingTableInfo request received.`)
+    this.logger('portal_historyRoutingTableInfo request received.')
     let localNodeId = ''
     let buckets: string[][] = []
     const table = this._history.routingTable
@@ -382,7 +390,7 @@ export class portal {
     }
   }
   async stateRoutingTableInfo(_params: []): Promise<any> {
-    this.logger(`portal_stateRoutingTableInfo request received.`)
+    this.logger('portal_stateRoutingTableInfo request received.')
     let localNodeId = ''
     let buckets: string[][] = []
     const table = this._state.routingTable
@@ -620,7 +628,7 @@ export class portal {
     )
 
     let encodedPayload = undefined
-    if (payload !== undefined) {
+    if (payload !== undefined && payload !== null) {
       encodedPayload = encodeExtensionPayloadFromJson(extension, payload)
     }
     const pong = await this._history.sendPing(encodedENR, extension, encodedPayload)
@@ -644,7 +652,7 @@ export class portal {
       `PING request received on StateNetwork for ${shortId(encodedENR.nodeId)} with extension ${extension}`,
     )
     let encodedPayload = undefined
-    if (payload !== undefined) {
+    if (payload !== undefined && payload !== null) {
       encodedPayload = encodeExtensionPayloadFromJson(extension, payload)
     }
     const pong = await this._state.sendPing(encodedENR, extension, encodedPayload)
@@ -670,7 +678,7 @@ export class portal {
     )
 
     let encodedPayload = undefined
-    if (payload !== undefined) {
+    if (payload !== undefined && payload !== null) {
       encodedPayload = encodeExtensionPayloadFromJson(extension, payload)
     }
 
@@ -781,11 +789,11 @@ export class portal {
     const [contentKey] = params
     this.logger(`Received historyLocalContent request for ${contentKey}`)
 
-    const res = await this._history.findContentLocally(hexToBytes(contentKey))
-    this.logger.extend(`historyLocalContent`)(
+    const res = await this._history.findContentLocally(hexToBytes(contentKey as PrefixedHexString))
+    this.logger.extend('historyLocalContent')(
       `request returned ${res !== undefined ? res.length : 'null'} bytes`,
     )
-    this.logger.extend(`historyLocalContent`)(
+    this.logger.extend('historyLocalContent')(
       `${res !== undefined ? short(bytesToHex(res)) : 'content not found'}`,
     )
     if (res === undefined) {
@@ -800,9 +808,9 @@ export class portal {
     const [contentKey] = params
     this.logger(`Received stateLocalContent request for ${contentKey}`)
 
-    const res = await this._state.findContentLocally(hexToBytes(contentKey))
-    this.logger.extend(`stateLocalContent`)(`request returned ${res?.length} bytes`)
-    this.logger.extend(`stateLocalContent`)(
+    const res = await this._state.findContentLocally(hexToBytes(contentKey as PrefixedHexString))
+    this.logger.extend('stateLocalContent')(`request returned ${res?.length} bytes`)
+    this.logger.extend('stateLocalContent')(
       `${res !== undefined ? bytesToHex(res) : 'content not found'}`,
     )
     if (res === undefined) {
@@ -815,13 +823,15 @@ export class portal {
   }
   async beaconLocalContent(params: [string]) {
     const [contentKey] = params
-    this.logger.extend(`beaconLocalContent`)(`Received request for ${contentKey}`)
+    this.logger.extend('beaconLocalContent')(`Received request for ${contentKey}`)
 
-    const content = await this._beacon.findContentLocally(hexToBytes(contentKey))
-    this.logger.extend(`beaconLocalContent`)(
+    const content = await this._beacon.findContentLocally(
+      hexToBytes(contentKey as PrefixedHexString),
+    )
+    this.logger.extend('beaconLocalContent')(
       `request returned ${content !== undefined ? content.length : 'null'} bytes`,
     )
-    this.logger.extend(`beaconLocalContent`)(
+    this.logger.extend('beaconLocalContent')(
       `retrieved content: ${content !== undefined ? short(bytesToHex(content)) : 'content not found'}`,
     )
     if (content !== undefined) return bytesToHex(content)
@@ -833,7 +843,7 @@ export class portal {
 
   // portal_*Store
   async historyStore(params: [string, string]) {
-    const [contentKey, content] = params.map((param) => hexToBytes(param))
+    const [contentKey, content] = params.map((param) => hexToBytes(param as PrefixedHexString))
     try {
       await this._history.store(contentKey, content)
       return true
@@ -844,8 +854,8 @@ export class portal {
   async stateStore(params: [string, string]) {
     const [contentKey, content] = params
     try {
-      const contentKeyBytes = hexToBytes(contentKey)
-      await this._state.store(contentKeyBytes, hexToBytes(content))
+      const contentKeyBytes = hexToBytes(contentKey as PrefixedHexString)
+      await this._state.store(contentKeyBytes, hexToBytes(content as PrefixedHexString))
       this.logger(`stored ${contentKey} in state network db`)
       return true
     } catch {
@@ -854,7 +864,7 @@ export class portal {
     }
   }
   async beaconStore(params: [string, string]) {
-    const [contentKey, content] = params.map((param) => hexToBytes(param))
+    const [contentKey, content] = params.map((param) => hexToBytes(param as PrefixedHexString))
     try {
       await this._beacon.store(contentKey, content)
       return true
@@ -865,7 +875,7 @@ export class portal {
   }
   // portal_*PutContent
   async historyPutContent(params: [string, string]) {
-    const [contentKey, content] = params.map((param) => hexToBytes(param))
+    const [contentKey, content] = params.map((param) => hexToBytes(param as PrefixedHexString))
     const contentId = this._history.contentKeyToId(contentKey)
     const d = distance(contentId, this._client.discv5.enr.nodeId)
     let storedLocally = false
@@ -887,7 +897,7 @@ export class portal {
     }
   }
   async statePutContent(params: [string, string]) {
-    const [contentKey, content] = params.map((param) => hexToBytes(param))
+    const [contentKey, content] = params.map((param) => hexToBytes(param as PrefixedHexString))
     const contentId = this._state.contentKeyToId(contentKey)
     const d = distance(contentId, this._client.discv5.enr.nodeId)
     let storedLocally = false
@@ -909,7 +919,7 @@ export class portal {
     }
   }
   async beaconPutContent(params: [string, string]) {
-    const [contentKey, content] = params.map((param) => hexToBytes(param))
+    const [contentKey, content] = params.map((param) => hexToBytes(param as PrefixedHexString))
     const contentId = this._beacon.contentKeyToId(contentKey)
     const d = distance(contentId, this._client.discv5.enr.nodeId)
     let storedLocally = false
@@ -938,9 +948,12 @@ export class portal {
     this.logger.extend('findContent')(
       `received request to send request to ${shortId(nodeId)} for contentKey ${contentKey}`,
     )
-    const res = await this._history.sendFindContent(ENR.decodeTxt(enr), hexToBytes(contentKey))
+    const res = await this._history.sendFindContent(
+      ENR.decodeTxt(enr),
+      hexToBytes(contentKey as PrefixedHexString),
+    )
     if (res === undefined) {
-      this.logger.extend('findContent')(`request returned undefined`)
+      this.logger.extend('findContent')('request returned undefined')
       return undefined
     }
     const resType =
@@ -970,9 +983,12 @@ export class portal {
     this.logger.extend('findContent')(
       `received request to send request to ${shortId(nodeId)} for contentKey ${contentKey}`,
     )
-    const res = await this._state.sendFindContent(ENR.decodeTxt(enr), hexToBytes(contentKey))
+    const res = await this._state.sendFindContent(
+      ENR.decodeTxt(enr),
+      hexToBytes(contentKey as PrefixedHexString),
+    )
     if (res === undefined) {
-      this.logger.extend('findContent')(`request returned type: ENRS`)
+      this.logger.extend('findContent')('request returned type: ENRS')
       return { enrs: [] }
     }
     const resType =
@@ -1003,10 +1019,13 @@ export class portal {
       }
     }
 
-    const res = await this._beacon.sendFindContent(ENR.decodeTxt(enr), hexToBytes(contentKey))
+    const res = await this._beacon.sendFindContent(
+      ENR.decodeTxt(enr),
+      hexToBytes(contentKey as PrefixedHexString),
+    )
 
     if (res === undefined) {
-      this.logger.extend('findContent')(`request returned type: ENRS`)
+      this.logger.extend('findContent')('request returned type: ENRS')
       return { enrs: [] }
     }
     const resType =
@@ -1029,10 +1048,10 @@ export class portal {
   async historyGetContent(params: [string]) {
     const [contentKey] = params
     this.logger.extend('historyGetContent')(`request received for ${contentKey}`)
-    const lookup = new ContentLookup(this._history, hexToBytes(contentKey))
+    const lookup = new ContentLookup(this._history, hexToBytes(contentKey as PrefixedHexString))
     const res = await lookup.startLookup()
     if (res === undefined) {
-      this.logger.extend('historyGetContent')(`request returned { enrs: [] }`)
+      this.logger.extend('historyGetContent')('request returned { enrs: [] }')
       throw new Error('No content found')
     }
     if ('enrs' in res) {
@@ -1056,10 +1075,10 @@ export class portal {
   async stateGetContent(params: [string]) {
     const [contentKey] = params
     this.logger.extend('stateGetContent')(`request received for ${contentKey}`)
-    const lookup = new ContentLookup(this._state, hexToBytes(contentKey))
+    const lookup = new ContentLookup(this._state, hexToBytes(contentKey as PrefixedHexString))
     const res = await lookup.startLookup()
     if (!res) {
-      this.logger.extend('stateGetContent')(`request returned { enrs: [] }`)
+      this.logger.extend('stateGetContent')('request returned { enrs: [] }')
       throw new Error('No content found')
     }
     if ('enrs' in res) {
@@ -1083,11 +1102,11 @@ export class portal {
   async beaconGetContent(params: [string]) {
     const [contentKey] = params
     this.logger.extend('beaconGetContent')(`request received for ${contentKey}`)
-    const lookup = new ContentLookup(this._beacon, hexToBytes(contentKey))
+    const lookup = new ContentLookup(this._beacon, hexToBytes(contentKey as PrefixedHexString))
     const res = await lookup.startLookup()
     this.logger.extend('beaconGetContent')(`request returned ${JSON.stringify(res)}`)
     if (!res) {
-      this.logger.extend('beaconGetContent')(`request returned { enrs: [] }`)
+      this.logger.extend('beaconGetContent')('request returned { enrs: [] }')
       throw new Error('No content found')
     }
     if ('enrs' in res) {
@@ -1113,15 +1132,19 @@ export class portal {
   async historyTraceGetContent(params: [string]) {
     const [contentKey] = params
     this.logger.extend('historyTraceGetContent')(`request received for ${contentKey}`)
-    const lookup = new ContentLookup(this._history, hexToBytes(contentKey), true)
+    const lookup = new ContentLookup(
+      this._history,
+      hexToBytes(contentKey as PrefixedHexString),
+      true,
+    )
     const res = await lookup.startLookup()
     this.logger.extend('historyTraceGetContent')(`request returned ${JSON.stringify(res)}`)
     if (!res) {
-      this.logger.extend('historyTraceGetContent')(`request returned nothing`)
+      this.logger.extend('historyTraceGetContent')('request returned nothing')
       throw new Error('No content found')
     }
     if (!('content' in res)) {
-      this.logger.extend('historyTraceGetContent')(`request found no content }`)
+      this.logger.extend('historyTraceGetContent')('request found no content }')
       const error = {
         code: CONTENT_NOT_FOUND,
         trace: res.trace,
@@ -1142,15 +1165,19 @@ export class portal {
   async beaconTraceGetContent(params: [string]) {
     const [contentKey] = params
     this.logger.extend('beaconTraceGetContent')(`request received for ${contentKey}`)
-    const lookup = new ContentLookup(this._history, hexToBytes(contentKey), true)
+    const lookup = new ContentLookup(
+      this._history,
+      hexToBytes(contentKey as PrefixedHexString),
+      true,
+    )
     const res = await lookup.startLookup()
     this.logger.extend('beaconTraceGetContent')(`request returned ${JSON.stringify(res)}`)
     if (!res) {
-      this.logger.extend('beaconTraceGetContent')(`request returned { enrs: [] }`)
+      this.logger.extend('beaconTraceGetContent')('request returned { enrs: [] }')
       throw new Error('No content found')
     }
     if (!('content' in res)) {
-      this.logger.extend('beaconTraceGetContent')(`request found no content }`)
+      this.logger.extend('beaconTraceGetContent')('request found no content }')
       const error = {
         code: CONTENT_NOT_FOUND,
         trace: res.trace,
@@ -1171,15 +1198,19 @@ export class portal {
   async stateTraceGetContent(params: [string]) {
     const [contentKey] = params
     this.logger.extend('stateTraceGetContent')(`request received for ${contentKey}`)
-    const lookup = new ContentLookup(this._history, hexToBytes(contentKey), true)
+    const lookup = new ContentLookup(
+      this._history,
+      hexToBytes(contentKey as PrefixedHexString),
+      true,
+    )
     const res = await lookup.startLookup()
     this.logger.extend('stateTraceGetContent')(`request returned ${JSON.stringify(res)}`)
     if (!res) {
-      this.logger.extend('stateTraceGetContent')(`request returned { enrs: [] }`)
+      this.logger.extend('stateTraceGetContent')('request returned { enrs: [] }')
       throw new Error('No content found')
     }
     if (!('content' in res)) {
-      this.logger.extend('stateTraceGetContent')(`request found no content }`)
+      this.logger.extend('stateTraceGetContent')('request found no content }')
       const error = {
         code: CONTENT_NOT_FOUND,
         trace: res.trace,
@@ -1203,49 +1234,40 @@ export class portal {
     params: [string, [string, string][]],
   ): Promise<string | ReturnType<typeof this._history.sendOffer>> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as PrefixedHexString))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as PrefixedHexString))
     const enr = ENR.decodeTxt(enrHex)
-    if (this._history.routingTable.getWithPending(enr.nodeId)?.value === undefined) {
-      const res = await this._history.sendPing(enr)
-      if (res === undefined) {
-        return '0x'
-      }
-    }
     const res = await this._history.sendOffer(enr, contentKeys, contentValues)
-    return res
+    if (res === undefined) {
+      return '0x'
+    }
+    return res instanceof BitArray ? bytesToHex(res.uint8Array) : bytesToHex(res)
   }
   async stateOffer(
     params: [string, [string, string][]],
   ): Promise<string | ReturnType<typeof this._state.sendOffer>> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as PrefixedHexString))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as PrefixedHexString))
     const enr = ENR.decodeTxt(enrHex)
-    if (this._state.routingTable.getWithPending(enr.nodeId)?.value === undefined) {
-      const res = await this._state.sendPing(enr)
-      if (res === undefined) {
-        return '0x'
-      }
-    }
     const res = await this._state.sendOffer(enr, contentKeys, contentValues)
-    return res
+    if (res === undefined) {
+      return '0x'
+    }
+    return res instanceof BitArray ? bytesToHex(res.uint8Array) : bytesToHex(res)
   }
   async beaconOffer(
     params: [string, [string, string][]],
   ): Promise<string | ReturnType<typeof this._beacon.sendOffer>> {
     const [enrHex, contentItems] = params
-    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as `0x${string}`))
-    const contentValues = contentItems.map((item) => hexToBytes(item[1] as `0x${string}`))
+    const contentKeys = contentItems.map((item) => hexToBytes(item[0] as PrefixedHexString))
+    const contentValues = contentItems.map((item) => hexToBytes(item[1] as PrefixedHexString))
     const enr = ENR.decodeTxt(enrHex)
-    if (this._beacon.routingTable.getWithPending(enr.nodeId)?.value === undefined) {
-      const res = await this._beacon.sendPing(enr)
-      if (res === undefined) {
-        return '0x'
-      }
-    }
     const res = await this._beacon.sendOffer(enr, contentKeys, contentValues)
-    return res
+    if (res === undefined) {
+      return '0x'
+    }
+    return res instanceof BitArray ? bytesToHex(res.uint8Array) : bytesToHex(res)
   }
 
   // portal_*TraceOffer
@@ -1325,20 +1347,26 @@ export class portal {
   async historyGossip(params: [string, string]) {
     const [contentKey, content] = params
     this.logger(`historyGossip request received for ${contentKey}`)
-    const res = await this._history.gossipContent(hexToBytes(contentKey), hexToBytes(content))
+    const res = await this._history.gossipContent(
+      hexToBytes(contentKey as PrefixedHexString),
+      hexToBytes(content as PrefixedHexString),
+    )
     return res
   }
   async stateGossip(params: [string, string]) {
     const [contentKey, content] = params
     this.logger(`stateGossip request received for ${contentKey}`)
-    const res = await this._state.gossipContent(hexToBytes(contentKey), hexToBytes(content))
+    const res = await this._state.gossipContent(
+      hexToBytes(contentKey as PrefixedHexString),
+      hexToBytes(content as PrefixedHexString),
+    )
     return res
   }
 
   // other
 
   async beaconOptimisticStateRoot(): Promise<string> {
-    this.logger(`beaconOptimisticStateRoot request received`)
+    this.logger('beaconOptimisticStateRoot request received')
     if (
       this._beacon.lightClient?.status === RunStatusCode.uninitialized ||
       this._beacon.lightClient?.status === RunStatusCode.stopped
@@ -1357,7 +1385,7 @@ export class portal {
   }
 
   async beaconFinalizedStateRoot(): Promise<string> {
-    this.logger(`beaconFinalizedStateRoot request received`)
+    this.logger('beaconFinalizedStateRoot request received')
     if (
       this._beacon.lightClient?.status === RunStatusCode.uninitialized ||
       this._beacon.lightClient?.status === RunStatusCode.stopped

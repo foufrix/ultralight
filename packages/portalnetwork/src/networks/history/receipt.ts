@@ -52,7 +52,7 @@ export class Receipt {
   }
 
   public static decodeReceiptBytes(encoded: Uint8Array): TxReceiptType {
-    return this.fromEncodedReceipt(encoded).decoded()
+    return Receipt.fromEncodedReceipt(encoded).decoded()
   }
 
   constructor(opts: IReceiptOpts) {
@@ -87,7 +87,7 @@ export class Receipt {
           cumulativeBlockGasUsed: this.cumulativeBlockGasUsed,
           bitvector: this.bitvector,
           logs: this.logs,
-          stateRoot: this.stateRoot!,
+          stateRoot: this.stateRoot,
           txType: this.txType,
         } as PreByzantiumTxReceiptWithType
       } else {
@@ -102,7 +102,7 @@ export class Receipt {
     } else {
       if (this.stateRoot instanceof Uint8Array) {
         return {
-          stateRoot: this.stateRoot!,
+          stateRoot: this.stateRoot,
           cumulativeBlockGasUsed: this.cumulativeBlockGasUsed,
           bitvector: this.bitvector,
           logs: this.logs,
@@ -122,7 +122,7 @@ export class Receipt {
 export function encodeReceipt(receipt: TxReceipt, txType: number) {
   const encoded = RLP.encode([
     (receipt as PreByzantiumTxReceipt).stateRoot ??
-      ((receipt as PostByzantiumTxReceipt).status === 0 ? new Uint8Array() : hexToBytes('01')),
+      ((receipt as PostByzantiumTxReceipt).status === 0 ? new Uint8Array() : hexToBytes('0x01')),
     bigIntToBytes(receipt.cumulativeBlockGasUsed),
     receipt.bitvector,
     receipt.logs,

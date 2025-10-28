@@ -15,7 +15,7 @@ import { Bloom, reassembleBlock } from '../index.js'
 
 import type { Block } from '@ethereumjs/block'
 import type { TypedTransaction } from '@ethereumjs/tx'
-import type { NestedUint8Array } from '@ethereumjs/util'
+import type { NestedUint8Array, PrefixedHexString } from '@ethereumjs/util'
 import type { PostByzantiumTxReceipt, PreByzantiumTxReceipt, TxReceipt } from '@ethereumjs/vm'
 import type { Log, TxReceiptType, TxReceiptWithType } from '../index.js'
 
@@ -100,7 +100,7 @@ export async function getReceipts(
   includeTxType?: true,
 ): Promise<TxReceipt[] | TxReceiptWithType[]> {
   if (!encoded) return []
-  let receipts = decodeReceipts(hexToBytes(encoded))
+  let receipts = decodeReceipts(hexToBytes(encoded as PrefixedHexString))
   if (calcBloom !== undefined) {
     receipts = receipts.map((r) => {
       r.bitvector = logsBloom(r.logs).bitvector
@@ -108,7 +108,10 @@ export async function getReceipts(
     })
   }
   if (includeTxType && body !== undefined) {
-    const block = reassembleBlock(hexToBytes(encoded), hexToBytes(body))
+    const block = reassembleBlock(
+      hexToBytes(encoded as PrefixedHexString),
+      hexToBytes(body as PrefixedHexString),
+    )
     receipts = (receipts as TxReceiptWithType[]).map((r, i) => {
       r.txType = block.transactions[i].type
       return r
@@ -125,17 +128,17 @@ export async function getLogs(
   const returnedLogs: GetLogsReturn = []
   let returnedLogsSize = 0
   for (const block of blocks) {
-    const receipts = await getReceipts(bytesToHex(block!.hash()))
+    const receipts = await getReceipts(bytesToHex(block.hash()))
     if (receipts.length === 0) continue
     let logs: GetLogsReturn = []
     let logIndex = 0
     for (const [receiptIndex, receipt] of receipts.entries()) {
       block !== undefined &&
         logs.push(
-          ...receipt!.logs.map((log) => ({
+          ...receipt.logs.map((log) => ({
             log,
             block,
-            tx: block!.transactions[receiptIndex],
+            tx: block.transactions[receiptIndex],
             txIndex: receiptIndex,
             logIndex: logIndex++,
           })),
@@ -149,14 +152,14 @@ export async function getLogs(
         for (const [i, topic] of topics.entries()) {
           if (Array.isArray(topic)) {
             if (!topic.find((t) => equalsBytes(t, l.log[1][i]))) return false
-          } else if (!topic) {
+          } else if (topic === null) {
             // If null then can match any
           } else {
             // If a value is specified then it must match
             if (equalsBytes(topic, l.log[1][i]) === false) return false
           }
-          return true
         }
+        return true
       })
     }
     returnedLogs.push(...logs)

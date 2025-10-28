@@ -7,9 +7,9 @@ import {
   HistoryNetworkContentType,
   HistoryRadius,
   PingPongPayloadExtensions,
+  createPortalNetwork,
   getContentKey,
   getEphemeralHeaderDbKey,
-  createPortalNetwork,
 } from '../../../src/index.js'
 import latestBlocks from './testData/latest3Blocks.json'
 
@@ -29,7 +29,7 @@ describe('ephemeral header handling', () => {
       createBlockFromRPC(latestBlocks[2] as JSONRPCBlock, [], { setHardfork: true }).header,
     )
     headerPayload = EphemeralHeaderPayload.serialize(headers.map((h) => h.serialize()))
-    contentKey = getContentKey(HistoryNetworkContentType.EphemeralHeader, {
+    contentKey = getContentKey(HistoryNetworkContentType.EphemeralHeaderFindContent, {
       blockHash: headers[0].hash(),
       ancestorCount: headers.length - 1,
     })
@@ -40,7 +40,7 @@ describe('ephemeral header handling', () => {
 
     await network!.store(contentKey, headerPayload)
     const storedHeaderPayload = await network?.get(getEphemeralHeaderDbKey(headers[0].hash()))
-    assert.deepEqual(hexToBytes(storedHeaderPayload!), headers[0].serialize())
+    assert.deepEqual(hexToBytes(storedHeaderPayload! as `0x${string}`), headers[0].serialize())
     assert.deepEqual(
       network!.ephemeralHeaderIndex.getByKey(headers[1].number),
       bytesToHex(headers[1].hash()),

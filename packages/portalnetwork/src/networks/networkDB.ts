@@ -1,10 +1,10 @@
 import { distance } from '@chainsafe/discv5'
 import { ContainerType, UintBigintType } from '@chainsafe/ssz'
-import { bytesToHex, hexToBytes, padToEven } from '@ethereumjs/util'
+import { type PrefixedHexString, bytesToHex, hexToBytes, padToEven } from '@ethereumjs/util'
 import debug from 'debug'
 import { MemoryLevel } from 'memory-level'
 
-import { type NetworkId } from './index.js'
+import type { NetworkId } from './index.js'
 
 import type { AbstractBatchOperation, AbstractLevel } from 'abstract-level'
 import type { Debugger } from 'debug'
@@ -37,11 +37,7 @@ export class NetworkDB {
     this.dataDir = db?.path
     this.streaming = new Set()
     this.logger = logger?.extend('DB') ?? debug(`${this.networkId}DB`)
-    this.contentId =
-      contentId ??
-      function (contentKey: Uint8Array) {
-        return bytesToHex(contentKey)
-      }
+    this.contentId = contentId ?? ((contentKey: Uint8Array) => bytesToHex(contentKey))
     this.maxStorage = maxStorage ?? 1024
     this.dbSize = dbSize
     this.approximateSize = 0
@@ -81,7 +77,9 @@ export class NetworkDB {
       this.logger(`Error putting content in DB: ${err.toString()}`)
     }
     this.streaming.delete(key)
-    this.logger(`Put ${key} in DB.  Size=${hexToBytes(padToEven(val)).length} bytes`)
+    this.logger(
+      `Put ${key} in DB.  Size=${hexToBytes(padToEven(val) as PrefixedHexString).length} bytes`,
+    )
     this.approximateSize += 2 * (val.length - 2)
     this.approximateSize += 2 * (key.length - 2)
   }
@@ -100,7 +98,7 @@ export class NetworkDB {
       this.logger(`Content ${key}.  currently streaming`)
     }
     const timeout = setTimeout(() => {
-      this.streaming.delete(<string>key)
+      this.streaming.delete(key)
     }, 1000)
     while (this.streaming.has(key)) {
       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -108,7 +106,7 @@ export class NetworkDB {
     this.logger(`Getting ${key} from DB`)
     const val = await this.db.get(key)
     this.logger(
-      `Got ${key} from DB with key: ${key}.  Size=${hexToBytes(padToEven(val)).length} bytes`,
+      `Got ${key} from DB with key: ${key}.  Size=${hexToBytes(padToEven(val) as PrefixedHexString).length} bytes`,
     )
     clearTimeout(timeout)
     return val
@@ -142,10 +140,10 @@ export class NetworkDB {
     if (this.dbSize) {
       size = await this.dbSize()
     } else {
-    for await (const [key, value] of this.db.iterator()) {
-      try {
-        size += hexToBytes('0x' + padToEven(key.slice(2))).length
-        size += hexToBytes(value).length
+      for await (const [key, value] of this.db.iterator()) {
+        try {
+          size += hexToBytes(`0x${padToEven(key.slice(2))}`).length
+          size += hexToBytes(value as PrefixedHexString).length
         } catch {
           // ignore
         }
@@ -181,7 +179,7 @@ export class NetworkDB {
         continue
       }
       // Calculate distance between node and content
-      const d = distance(this.nodeId, this.contentId(hexToBytes(key)))
+      const d = distance(this.nodeId, this.contentId(hexToBytes(key as PrefixedHexString)))
       // If content is out of radius -- delete content
       if (d > radius) {
         this.logger.extend('prune')(`Content ${key} is out of radius`)

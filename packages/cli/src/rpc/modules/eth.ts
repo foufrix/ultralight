@@ -1,6 +1,6 @@
 import type { PrefixedHexString } from '@ethereumjs/util'
 import { bigIntToHex, hexToBytes, intToHex, toBytes } from '@ethereumjs/util'
-import { GET_LOGS_BLOCK_RANGE_LIMIT, NetworkId, getLogs } from 'portalnetwork'
+import { ChainId, GET_LOGS_BLOCK_RANGE_LIMIT, NetworkId, NetworkIdByChain, getLogs } from 'portalnetwork'
 
 import { INTERNAL_ERROR, INVALID_PARAMS } from '../error-code.js'
 import { jsonRpcLog } from '../types.js'
@@ -26,7 +26,7 @@ export class eth {
    */
   constructor(client: PortalNetwork, logger: Debugger) {
     this._client = client
-    this._history = client.networks.get(NetworkId.HistoryNetwork) as HistoryNetwork
+    this._history = client.networks.get(NetworkIdByChain[client.chainId].HistoryNetwork) as HistoryNetwork
     this.logger = logger.extend('eth')
 
     this.getBlockByNumber = middleware(
@@ -86,12 +86,16 @@ export class eth {
       [validators.transaction(['to'])],
       [validators.blockOption],
     ])
+    this.chainId = middleware(callWithStackTrace(this.chainId.bind(this), false), 0, [])
   }
 
   async getBalance(params: [string, string]) {
     const [address, blockTag] = params
     try {
-      const res = await this._client.ETH.getBalance(hexToBytes(address), BigInt(blockTag))
+      const res = await this._client.ETH.getBalance(
+        hexToBytes(address as PrefixedHexString),
+        BigInt(blockTag),
+      )
       if (res === undefined) {
         throw {
           code: INTERNAL_ERROR,
@@ -127,7 +131,12 @@ export class eth {
    * @returns The chain ID.
    */
   async chainId(_params = []) {
-    return '0x01'
+    switch (this._client.chainId) {
+      case ChainId.MAINNET:
+        return '0x1'
+      case ChainId.SEPOLIA:
+        return '0xaa36a7'
+    }
   }
 
   /**
@@ -141,7 +150,10 @@ export class eth {
     this._client.logger(
       `eth_getBlockByHash request received. blockHash: ${blockHash} includeTransactions: ${includeTransactions}`,
     )
-    const block = await this._client.ETH.getBlockByHash(hexToBytes(blockHash), includeTransactions)
+    const block = await this._client.ETH.getBlockByHash(
+      hexToBytes(blockHash as PrefixedHexString),
+      includeTransactions,
+    )
     //@ts-ignore @ethereumjs/block has some weird typing discrepancy
     if (block !== undefined) return block
     throw new Error('Block not found')
@@ -160,7 +172,7 @@ export class eth {
     )
     try {
       const block = await this._client.ETH.getBlockByNumber(
-        parseInt(blockNumber),
+        Number.parseInt(blockNumber),
         includeTransactions,
       )
       if (block === undefined) throw new Error('block not found')
@@ -233,13 +245,13 @@ export class eth {
     if (blockHash !== undefined && (fromBlock !== undefined || toBlock !== undefined)) {
       throw {
         code: INVALID_PARAMS,
-        message: `Can only specify a blockHash if fromBlock or toBlock are not provided`,
+        message: 'Can only specify a blockHash if fromBlock or toBlock are not provided',
       }
     }
     let from: Block, to: Block
     if (blockHash !== undefined) {
       try {
-        from = to = (await this.getBlockByHash([blockHash, true])) as Block
+        from = to = await this.getBlockByHash([blockHash, true])
       } catch (error: any) {
         throw {
           code: INVALID_PARAMS,
@@ -248,12 +260,12 @@ export class eth {
       }
     } else {
       if (fromBlock === 'earliest') {
-        from = (await this.getBlockByNumber(['0', true])) as Block
+        from = await this.getBlockByNumber(['0', true])
       } else if (fromBlock === 'latest' || fromBlock === undefined) {
         throw new Error(`History Network does not support "latest" block`)
       } else {
         const blockNum = BigInt(fromBlock)
-        from = (await this.getBlockByNumber([blockNum.toString(), true])) as Block
+        from = await this.getBlockByNumber([blockNum.toString(), true])
       }
       if (toBlock === fromBlock) {
         to = from
@@ -289,10 +301,7 @@ export class eth {
         Array.from(
           { length: Number(to.header.number) - Number(from.header.number) + 1 } as any,
           async (_, i) =>
-            (await this.getBlockByNumber([
-              bigIntToHex(BigInt(i) + from.header.number),
-              true,
-            ])) as Block,
+            this.getBlockByNumber([bigIntToHex(BigInt(i) + from.header.number), true]),
         ),
       ) //@ts-ignore
       const logs = await getLogs(await blocks, addrs, formattedTopics)

@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "engines": {
-    "node": "^20"
+    "node": "^22"
   },
   "devDependencies": {
     "@lodestar/api": "^1.12.0",
@@ -15,23 +15,22 @@
     "@types/yargs": "^17.0.7",
     "@vitest/ui": "^3.0.2",
     "alchemy-sdk": "^3.0.0",
-    "eslint": "^8.6.0",
     "kzg-wasm": "^0.5.0",
     "nodemon": "^2.0.19",
     "vitest": "^3.0.2"
   },
   "dependencies": {
-    "@chainsafe/discv5": "^11.0.0",
-    "@chainsafe/enr": "^5.0.0",
+    "@chainsafe/discv5": "^11.0.2",
+    "@chainsafe/enr": "^5.0.1",
     "@chainsafe/persistent-merkle-tree": "^0.8.0",
     "@chainsafe/ssz": "^0.17.1",
-    "@ethereumjs/block": "^10.0.0-rc.1",
-    "@ethereumjs/rlp": "^10.0.0-rc.1",
-    "@ethereumjs/mpt": "^10.0.0-rc.1",
-    "@ethereumjs/tx": "^10.0.0-rc.1",
-    "@ethereumjs/util": "^10.0.0-rc.1",
-    "@ethereumjs/vm": "^10.0.0-rc.1",
-    "@libp2p/crypto": "5.0.2",
+    "@ethereumjs/block": "^10.0.0",
+    "@ethereumjs/rlp": "^10.0.0",
+    "@ethereumjs/mpt": "^10.0.0",
+    "@ethereumjs/tx": "^10.0.0",
+    "@ethereumjs/util": "^10.0.0",
+    "@ethereumjs/vm": "^10.0.0",
+    "@libp2p/crypto": "^5.0.2",
     "@lodestar/config": "^1.21.0",
     "@lodestar/light-client": "^1.21.0",
     "@lodestar/params": "^1.21.0",
@@ -65,9 +64,6 @@
   "author": "acolytec3",
   "license": "MIT",
   "nodemonConfig": {
-    "watch": [
-      "src",
-      "../portalnetwork/dist"
-    ]
+    "watch": ["src", "../portalnetwork/dist"]
   }
 }

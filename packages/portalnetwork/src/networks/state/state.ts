@@ -6,6 +6,7 @@ import {
   decodeMPTNode,
 } from '@ethereumjs/mpt'
 import {
+  type PrefixedHexString,
   bytesToHex,
   bytesToInt,
   bytesToUnprefixedHex,
@@ -23,8 +24,12 @@ import {
   PortalWireMessageType,
 } from '../../wire/types.js'
 import { BaseNetwork } from '../network.js'
-import { NetworkId } from '../types.js'
+import { type NetworkId, NetworkIdByChain } from '../types.js'
 
+import type { ENR } from '@chainsafe/enr'
+import type { Debugger } from 'debug'
+import type { FindContentMessage, Version } from '../../wire/types.js'
+import type { BaseNetworkConfig, ContentLookupResponse } from '../index.js'
 import { StateManager } from './manager.js'
 import { packNibbles, unpackNibbles } from './nibbleEncoding.js'
 import {
@@ -36,37 +41,35 @@ import {
   StorageTrieNodeOffer,
   StorageTrieNodeRetrieval,
 } from './types.js'
+import type { TNibbles } from './types.js'
 import {
-  AccountTrieNodeContentKey,
-  ContractCodeContentKey,
-  StateNetworkContentId,
-  StorageTrieNodeContentKey,
+  decodeAccountTrieNodeContentKey,
+  decodeContractCodeContentKey,
+  decodeStorageTrieNodeContentKey,
+  encodeAccountTrieNodeContentKey,
+  encodeStorageTrieNodeContentKey,
   extractAccountProof,
   nextOffer,
+  stateNetworkContentIdFromBytes,
 } from './util.js'
-import type { ENR } from '@chainsafe/enr'
-import type { Debugger } from 'debug'
-import type { FindContentMessage } from '../../wire/types.js'
-import type { BaseNetworkConfig, ContentLookupResponse } from '../index.js'
-import type { TNibbles } from './types.js'
 
 export class StateNetwork extends BaseNetwork {
-  networkId: NetworkId.StateNetwork
+  networkId: NetworkId
   networkName = 'StateNetwork'
   logger: Debugger
   stateroots: Map<bigint, Uint8Array> = new Map()
   manager: StateManager
 
   constructor({ client, db, radius, maxStorage }: BaseNetworkConfig) {
-    super({ client, db, radius, maxStorage, networkId: NetworkId.StateNetwork })
-    this.networkId = NetworkId.StateNetwork
+    super({ client, db, radius, maxStorage, networkId: NetworkIdByChain[client.chainId].StateNetwork })
+    this.networkId = NetworkIdByChain[client.chainId].StateNetwork
     this.logger = debug(this.enr.nodeId.slice(0, 5)).extend('Portal').extend('StateNetwork')
     this.routingTable.setLogger(this.logger)
     this.manager = new StateManager(this)
   }
 
   public contentKeyToId = (contentKey: Uint8Array): string => {
-    return bytesToUnprefixedHex(StateNetworkContentId.fromBytes(contentKey))
+    return bytesToUnprefixedHex(stateNetworkContentIdFromBytes(contentKey))
   }
 
   /**
@@ -76,9 +79,16 @@ export class StateNetwork extends BaseNetwork {
    * @returns the value of the FOUNDCONTENT response or undefined
    */
   public sendFindContent = async (enr: ENR, key: Uint8Array) => {
+    let version: Version
+    try {
+      version = await this.portal.highestCommonVersion(enr)
+    } catch (e: any) {
+      this.logger.extend('error')(e.message)
+      return
+    }
     this.portal.metrics?.findContentMessagesSent.inc()
     const findContentMsg: FindContentMessage = { contentKey: key }
-    const payload = PortalWireMessageType.serialize({
+    const payload = PortalWireMessageType[version].serialize({
       selector: MessageCodes.FINDCONTENT,
       value: findContentMsg,
     })
@@ -101,7 +111,7 @@ export class StateNetwork extends BaseNetwork {
             this.logger.extend('FOUNDCONTENT')(`received uTP Connection ID ${id}`)
             response = await new Promise((resolve, _reject) => {
               // TODO: Figure out how to clear this listener
-              this.on('ContentAdded', (contentKey: Uint8Array, value) => {
+              this.portal.on(`${this.networkId}:ContentAdded`, (contentKey, value) => {
                 if (equalsBytes(contentKey, key) === true) {
                   this.logger.extend('FOUNDCONTENT')(`received content for uTP Connection ID ${id}`)
                   resolve({ content: value, utp: true })
@@ -113,12 +123,13 @@ export class StateNetwork extends BaseNetwork {
                 enr,
                 connectionId: id,
                 requestCode: RequestCode.FINDCONTENT_READ,
+                version,
               })
             })
             break
           }
           case FoundContent.CONTENT:
-            this.logger.extend(`FOUNDCONTENT`)(
+            this.logger.extend('FOUNDCONTENT')(
               `received ${StateNetworkContentType[contentType]} content corresponding to ${bytesToHex(key)}`,
             )
             try {
@@ -129,7 +140,7 @@ export class StateNetwork extends BaseNetwork {
             response = { content: decoded.value as Uint8Array, utp: false }
             break
           case FoundContent.ENRS: {
-            this.logger.extend(`FOUNDCONTENT`)(`received ${decoded.value.length} ENRs`)
+            this.logger.extend('FOUNDCONTENT')(`received ${decoded.value.length} ENRs`)
             response = { enrs: decoded.value as Uint8Array[] }
             break
           }
@@ -144,13 +155,13 @@ export class StateNetwork extends BaseNetwork {
   public findContentLocally = async (contentKey: Uint8Array): Promise<Uint8Array | undefined> => {
     try {
       const value = await this.db.get(contentKey)
-      return value !== undefined ? hexToBytes(value) : undefined
+      return value !== undefined ? hexToBytes(value as PrefixedHexString) : undefined
     } catch {
       return undefined
     }
   }
 
-  public store = async (contentKey: Uint8Array, content: Uint8Array, offer: boolean = true) => {
+  public store = async (contentKey: Uint8Array, content: Uint8Array, offer = true) => {
     const contentType = contentKey[0]
     try {
       if (offer) {
@@ -172,16 +183,16 @@ export class StateNetwork extends BaseNetwork {
         await this.gossipContent(contentKey, content)
       } else {
         if (contentType === StateNetworkContentType.AccountTrieNode) {
-          const { nodeHash } = AccountTrieNodeContentKey.decode(contentKey)
+          const { nodeHash } = decodeAccountTrieNodeContentKey(contentKey)
           this.manager.trie.db.local.set(bytesToUnprefixedHex(nodeHash), bytesToHex(contentKey))
         } else if (contentType === StateNetworkContentType.ContractTrieNode) {
-          const { nodeHash } = StorageTrieNodeContentKey.decode(contentKey)
+          const { nodeHash } = decodeStorageTrieNodeContentKey(contentKey)
           this.manager.trie.db.local.set(bytesToUnprefixedHex(nodeHash), bytesToHex(contentKey))
         }
         await this.db.put(contentKey, content)
       }
       this.logger(`content added for: ${bytesToHex(contentKey)}`)
-      this.emit('ContentAdded', contentKey, content)
+      this.portal.emit(`${this.networkId}:ContentAdded`, contentKey, content)
       this.gossipManager.add(contentKey)
     } catch (err: any) {
       this.logger(`Error storing content: ${err.message}`)
@@ -193,7 +204,7 @@ export class StateNetwork extends BaseNetwork {
   ): Promise<{
     stored: number
   }> {
-    const { path } = AccountTrieNodeContentKey.decode(contentKey)
+    const { path } = decodeAccountTrieNodeContentKey(contentKey)
     const { proof, blockHash } = AccountTrieNodeOffer.deserialize(content)
     const interested = await this.storeInterestedAccountTrieNodes(path, proof)
     void this.forwardAccountTrieOffer(path, proof, blockHash)
@@ -226,11 +237,11 @@ export class StateNetwork extends BaseNetwork {
         `${i} Path: [${newpaths}] - ${curNode.constructor.name}: ${bytesToHex(nodeHash).slice(0, 8)}...`,
       )
       i++
-      const contentKey = AccountTrieNodeContentKey.encode({
+      const contentKey = encodeAccountTrieNodeContentKey({
         nodeHash,
         path: packNibbles(newpaths),
       })
-      const contentId = StateNetworkContentId.fromBytes(contentKey)
+      const contentId = stateNetworkContentIdFromBytes(contentKey)
       const in_radius = distance(bytesToUnprefixedHex(contentId), this.enr.nodeId) < this.nodeRadius
       if (in_radius) {
         const dbContent = AccountTrieNodeRetrieval.serialize({
@@ -246,7 +257,7 @@ export class StateNetwork extends BaseNetwork {
     }
     for (const { contentKey, dbContent } of interested) {
       await this.db.put(contentKey, dbContent)
-      this.emit('ContentAdded', contentKey, dbContent)
+      this.portal.emit(`${this.networkId}:ContentAdded`, contentKey, dbContent)
     }
     return { interested, notInterested }
   }
@@ -255,7 +266,7 @@ export class StateNetwork extends BaseNetwork {
     const { nodes, newpaths } = nextOffer(path, proof)
     const content = AccountTrieNodeOffer.serialize({ blockHash, proof: [...nodes] })
     const nodeHash = new Trie({ useKeyHashing: true })['hash'](nodes[nodes.length - 1])
-    const contentKey = AccountTrieNodeContentKey.encode({
+    const contentKey = encodeAccountTrieNodeContentKey({
       nodeHash,
       path: packNibbles(newpaths),
     })
@@ -270,7 +281,7 @@ export class StateNetwork extends BaseNetwork {
       node: curRlp,
     })
     await this.db.put(contentKey, dbContent)
-    this.emit('ContentAdded', contentKey, dbContent)
+    this.portal.emit(`${this.networkId}:ContentAdded`, contentKey, dbContent)
   }
 
   async storeStorageTrieNode(contentKey: Uint8Array, content: Uint8Array) {
@@ -280,7 +291,7 @@ export class StateNetwork extends BaseNetwork {
       node: curRlp,
     })
     await this.db.put(contentKey, dbContent)
-    this.emit('ContentAdded', contentKey, dbContent)
+    this.portal.emit(`${this.networkId}:ContentAdded`, contentKey, dbContent)
   }
 
   async receiveStorageTrieNodeOffer(
@@ -289,7 +300,7 @@ export class StateNetwork extends BaseNetwork {
   ): Promise<{
     stored: number
   }> {
-    const { addressHash, path } = StorageTrieNodeContentKey.decode(contentKey)
+    const { addressHash, path } = decodeStorageTrieNodeContentKey(contentKey)
     const { blockHash, accountProof, storageProof } = StorageTrieNodeOffer.deserialize(content)
     const interested = await this.storeInterestedStorageTrieNodes(path, storageProof, addressHash)
     await this.receiveAccountTrieNodeOffer(
@@ -330,12 +341,12 @@ export class StateNetwork extends BaseNetwork {
         `${i} Path: [${newpaths}] - ${curNode.constructor.name}: ${bytesToHex(nodeHash).slice(0, 8)}...`,
       )
       i++
-      const contentKey = StorageTrieNodeContentKey.encode({
+      const contentKey = encodeStorageTrieNodeContentKey({
         nodeHash,
         path: packNibbles(newpaths),
         addressHash,
       })
-      const contentId = StateNetworkContentId.fromBytes(contentKey)
+      const contentId = stateNetworkContentIdFromBytes(contentKey)
       const in_radius = distance(bytesToUnprefixedHex(contentId), this.enr.nodeId) < this.nodeRadius
       if (in_radius) {
         const dbContent = StorageTrieNodeRetrieval.serialize({
@@ -351,7 +362,7 @@ export class StateNetwork extends BaseNetwork {
     }
     for (const { contentKey, dbContent } of interested) {
       await this.db.put(contentKey, dbContent)
-      this.emit('ContentAdded', contentKey, dbContent)
+      this.portal.emit(`${this.networkId}:ContentAdded`, contentKey, dbContent)
     }
     return { interested, notInterested }
   }
@@ -369,7 +380,7 @@ export class StateNetwork extends BaseNetwork {
       storageProof: [...nodes],
     })
     const nodeHash = new Trie({ useKeyHashing: true })['hash'](nodes[nodes.length - 1])
-    const contentKey = StorageTrieNodeContentKey.encode({
+    const contentKey = encodeStorageTrieNodeContentKey({
       nodeHash,
       path: packNibbles(newpaths),
       addressHash,
@@ -378,12 +389,12 @@ export class StateNetwork extends BaseNetwork {
     return { content, contentKey }
   }
   async receiveContractCodeOffer(contentKey: Uint8Array, content: Uint8Array) {
-    const { addressHash, codeHash } = ContractCodeContentKey.decode(contentKey)
+    const { addressHash, codeHash } = decodeContractCodeContentKey(contentKey)
     const { accountProof, blockHash, code } = ContractCodeOffer.deserialize(content)
     const codeContent = ContractRetrieval.serialize({ code })
     this.manager.trie.db.local.set(bytesToUnprefixedHex(codeHash), bytesToHex(contentKey))
     await this.db.put(contentKey, codeContent)
-    this.emit('ContentAdded', contentKey, codeContent)
+    this.portal.emit(`${this.networkId}:ContentAdded`, contentKey, codeContent)
     await this.receiveAccountTrieNodeOffer(
       ...extractAccountProof(addressHash, accountProof, blockHash),
     )

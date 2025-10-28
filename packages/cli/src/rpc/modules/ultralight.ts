@@ -1,5 +1,5 @@
-import { bytesToHex, hexToBytes } from '@ethereumjs/util'
-import { HistoryNetworkContentType, NetworkId } from 'portalnetwork'
+import { type PrefixedHexString, bytesToHex, hexToBytes } from '@ethereumjs/util'
+import { HistoryNetworkContentType, type NetworkId, NetworkIdByChain } from 'portalnetwork'
 
 import { INTERNAL_ERROR } from '../error-code.js'
 import { middleware, validators } from '../validators.js'
@@ -29,9 +29,9 @@ export class ultralight {
 
   constructor(client: PortalNetwork, logger: Debugger) {
     this._client = client
-    this._history = this._client.network()[NetworkId.HistoryNetwork]
-    this._state = this._client.network()[NetworkId.StateNetwork]
-    this._beacon = this._client.network()[NetworkId.BeaconChainNetwork]
+    this._history = this._client.network()[NetworkIdByChain[client.chainId].HistoryNetwork] as HistoryNetwork | undefined
+    this._state = this._client.network()[NetworkIdByChain[client.chainId].StateNetwork] as StateNetwork | undefined
+    this._beacon = this._client.network()[NetworkIdByChain[client.chainId].BeaconChainNetwork] as BeaconNetwork | undefined
     this.logger = logger
     this.methods = middleware(this.methods.bind(this), 0, [])
     this.addContentToDB = middleware(this.addContentToDB.bind(this), 2, [
@@ -72,12 +72,15 @@ export class ultralight {
   async addContentToDB(params: [string, string]) {
     const [contentKey, value] = params
 
-    const type: number = parseInt(contentKey.slice(0, 4))
+    const type: number = Number.parseInt(contentKey.slice(0, 4))
     this.logger(
       `ultralight_addContentToDB request received for ${HistoryNetworkContentType[type]} ${contentKey}`,
     )
     try {
-      await this._history!.store(hexToBytes(contentKey), hexToBytes(value))
+      await this._history!.store(
+        hexToBytes(contentKey as PrefixedHexString),
+        hexToBytes(value as PrefixedHexString),
+      )
       this.logger(`${type} value for ${contentKey} added to content DB`)
       return `${type} value for ${contentKey} added to content DB`
     } catch (err: any) {
@@ -103,16 +106,16 @@ export class ultralight {
     const [networkId, radius] = params
     try {
       switch (networkId) {
-        case NetworkId.HistoryNetwork: {
-          await this._history!.setRadius(2n ** BigInt(parseInt(radius)) - 1n)
+        case NetworkIdByChain[this._client.chainId].HistoryNetwork: {
+          await this._history!.setRadius(2n ** BigInt(Number.parseInt(radius)) - 1n)
           return '0x' + this._history!.nodeRadius.toString(16)
         }
-        case NetworkId.StateNetwork: {
-          await this._state!.setRadius(2n ** BigInt(parseInt(radius)) - 1n)
+        case NetworkIdByChain[this._client.chainId].StateNetwork: {
+          await this._state!.setRadius(2n ** BigInt(Number.parseInt(radius)) - 1n)
           return '0x' + this._state!.nodeRadius.toString(16)
         }
-        case NetworkId.BeaconChainNetwork: {
-          await this._beacon!.setRadius(2n ** BigInt(parseInt(radius)) - 1n)
+        case NetworkIdByChain[this._client.chainId].BeaconChainNetwork: {
+          await this._beacon!.setRadius(2n ** BigInt(Number.parseInt(radius)) - 1n)
           return '0x' + this._beacon!.nodeRadius.toString(16)
         }
         default: {

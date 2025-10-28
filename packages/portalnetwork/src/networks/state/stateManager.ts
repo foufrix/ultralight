@@ -11,7 +11,7 @@ import {
 import { OriginalStorageCache } from './originalStorageCache/cache.js'
 
 import type { Proof, StateManagerInterface, StorageDump, StorageRange } from '@ethereumjs/common'
-import type { Address } from '@ethereumjs/util'
+import type { Address, PrefixedHexString } from '@ethereumjs/util'
 import type { StateNetwork } from './state.js'
 
 export class UltralightStateManager implements StateManagerInterface {
@@ -95,7 +95,7 @@ export class UltralightStateManager implements StateManagerInterface {
     let account: Account | undefined
     const accountRLP = await this.state.manager.getAccount(
       address.toBytes(),
-      hexToBytes(this.stateRoot),
+      hexToBytes(this.stateRoot as PrefixedHexString),
     )
     if (accountRLP !== undefined) {
       account = createAccountFromRLP(accountRLP)
@@ -105,9 +105,9 @@ export class UltralightStateManager implements StateManagerInterface {
   }
   putAccount = async (address: Address, account?: Account | undefined): Promise<void> => {
     if (account !== undefined) {
-      this._accountCache!.put(address, account)
+      this._accountCache.put(address, account)
     } else {
-      this._accountCache!.del(address)
+      this._accountCache.del(address)
     }
   }
   deleteAccount = async (address: Address): Promise<void> => {
@@ -117,11 +117,10 @@ export class UltralightStateManager implements StateManagerInterface {
     address: Address,
     accountFields: Partial<Pick<Account, 'nonce' | 'balance' | 'storageRoot' | 'codeHash'>>,
   ): Promise<void> => {
-    let account: Account | undefined
+    // let account: Account | undefined
     // let account = await this.getAccount(address)
-    if (account === undefined) {
-      account = new Account()
-    }
+    const account = new Account()
+
     account.nonce = accountFields.nonce ?? account.nonce
     account.balance = accountFields.balance ?? account.balance
     account.storageRoot = accountFields.storageRoot ?? account.storageRoot
@@ -135,7 +134,10 @@ export class UltralightStateManager implements StateManagerInterface {
   getContractCode = async (address: Address): Promise<Uint8Array> => {
     let code = this._contractCache.get(address.toString())
     if (code !== undefined) return code
-    code = await this.state.manager.getCode(address.toBytes(), hexToBytes(this.stateRoot))
+    code = await this.state.manager.getCode(
+      address.toBytes(),
+      hexToBytes(this.stateRoot as PrefixedHexString),
+    )
     if (code !== undefined) {
       this._contractCache.set(address.toString(), code)
     }
@@ -147,7 +149,7 @@ export class UltralightStateManager implements StateManagerInterface {
       throw new Error('Storage key must be 32 bytes long')
     }
 
-    let value: Uint8Array | null | undefined = this._storageCache!.get(address, key)
+    let value: Uint8Array | null | undefined = this._storageCache.get(address, key)
     if (value !== undefined) {
       return value
     }
@@ -155,7 +157,7 @@ export class UltralightStateManager implements StateManagerInterface {
     value = await this.state.manager.getStorageAt(
       address.toBytes(),
       key,
-      hexToBytes(this.stateRoot),
+      hexToBytes(this.stateRoot as PrefixedHexString),
     )
     if (value !== undefined) {
       this._storageCache.put(address, key, value ?? new Uint8Array())

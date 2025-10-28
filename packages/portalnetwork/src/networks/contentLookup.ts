@@ -25,6 +25,7 @@ export class ContentLookup {
   private finished: boolean
   private content: ContentLookupResponse
   private pending: Set<NodeId>
+  private queuedPeers: Set<NodeId>
   private completedRequests?: Map<NodeId, NodeId[]>
   private contentTrace?: ContentTrace
   constructor(network: BaseNetwork, contentKey: Uint8Array, trace = false) {
@@ -37,14 +38,30 @@ export class ContentLookup {
     this.finished = false
     this.meta = new Map()
     this.pending = new Set()
+    this.queuedPeers = new Set()
     this.completedRequests = trace ? new Map() : undefined
     this.contentTrace = trace
       ? {
-          origin: ('0x' + this.network.portal.discv5.enr.nodeId) as PrefixedHexString,
-          targetId: Array.from(hexToBytes('0x' + this.contentId)) as any,
-          metadata: {},
-        }
+        origin: ('0x' + this.network.portal.discv5.enr.nodeId) as PrefixedHexString,
+        targetId: Array.from(hexToBytes(`0x${this.contentId}`)) as any,
+        metadata: {},
+      }
       : undefined
+  }
+
+  private addPeerToQueue = (enr: ENR) => {
+    if (this.queuedPeers.has(enr.nodeId) || this.network.portal.uTP.hasRequests(enr.nodeId)) {
+      return
+    }
+
+    const dist = distance(enr.nodeId, this.contentId)
+    this.lookupPeers.push({ enr, distance: Number(dist) })
+    this.queuedPeers.add(enr.nodeId)
+    this.meta.set('0x' + enr.nodeId, {
+      enr: enr.encodeTxt(),
+      distance: bigIntToHex(dist),
+    })
+    this.logger(`Adding ${shortId(enr.nodeId)} to lookup queue (${this.lookupPeers.size()})`)
   }
 
   /**
@@ -73,26 +90,28 @@ export class ContentLookup {
     // Sort known peers by distance to the content
     const nearest = this.network.routingTable.values()
     for (const enr of nearest) {
-      // // Skip if the node has an active uTP request
-      if (this.network.portal.uTP.hasRequests(enr.nodeId) === true) {
-        continue
-      }
-      const dist = distance(enr.nodeId, this.contentId)
-      this.lookupPeers.push({ enr, distance: Number(dist) })
-      this.meta.set(enr.nodeId, { enr: enr.encodeTxt(), distance: bigIntToHex(dist) })
+      this.addPeerToQueue(enr)
     }
 
     while (!this.finished && (this.lookupPeers.length > 0 || this.pending.size > 0)) {
       if (this.lookupPeers.length > 0) {
         // Ask more peers (up to 5) for content
         const peerBatch: LookupPeer[] = []
-        while (this.lookupPeers.peek() && peerBatch.length < 5) {
+        const availableSlots = 5 - this.pending.size
+        while (this.lookupPeers.peek() && peerBatch.length < availableSlots) {
           const next = this.lookupPeers.pop()!
           peerBatch.push(next)
         }
         const promises = peerBatch.map((peer) => {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => {
+            controller.abort()
+          }, this.timeout)
+
           return Promise.race([
-            this.processPeer(peer),
+            this.processPeer(peer, controller.signal).finally(() => {
+              clearTimeout(timeoutId)
+            }),
             new Promise((resolve) =>
               setTimeout(() => {
                 resolve(undefined)
@@ -106,7 +125,7 @@ export class ContentLookup {
         try {
           await Promise.any(promises)
         } catch (err) {
-          this.logger(`All requests errored`)
+          this.logger('All requests errored')
         }
         if (!this.finished) {
           this.logger(
@@ -134,13 +153,13 @@ export class ContentLookup {
         NodeId,
         NodeId[]
       >
-      for (const nodeId of Object.keys(this.contentTrace.responses!)) {
+      for (const nodeId of Object.keys(this.contentTrace.responses)) {
         this.contentTrace.metadata!['0x' + nodeId] = this.meta.get('0x' + nodeId)! as {
           enr: `enr:${string}`
           distance: `0x${string}`
         }
       }
-      for (const nodeId of this.contentTrace.cancelled!) {
+      for (const nodeId of this.contentTrace.cancelled) {
         this.contentTrace.metadata!['0x' + nodeId] = this.meta.get('0x' + nodeId)! as {
           enr: `enr:${string}`
           distance: `0x${string}`
@@ -155,7 +174,10 @@ export class ContentLookup {
     return this.content
   }
 
-  private processPeer = async (peer: LookupPeer): Promise<ContentLookupResponse | void> => {
+  private processPeer = async (
+    peer: LookupPeer,
+    signal?: AbortSignal,
+  ): Promise<ContentLookupResponse | void> => {
     if (this.finished) return
     if (this.network.routingTable.isIgnored(peer.enr.nodeId)) {
       this.logger(`peer ${shortId(peer.enr.nodeId)} is ignored`)
@@ -165,7 +187,21 @@ export class ContentLookup {
     this.pending.add(peer.enr.encodeTxt())
     this.logger(`Requesting content from ${shortId(peer.enr.nodeId)}`)
     try {
-      const res = await this.network.sendFindContent!(peer.enr, this.contentKey)
+      // Create a promise that rejects when the signal is aborted
+      const abortPromise = new Promise((_, reject) => {
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            reject(new Error('Request cancelled'))
+          })
+        }
+      })
+
+      // Race between the actual request and the abort signal
+      const res = (await Promise.race([
+        this.network.sendFindContent!(peer.enr, this.contentKey),
+        abortPromise,
+      ])) as ContentLookupResponse | undefined
+
       this.pending.delete(peer.enr.encodeTxt())
       if (this.finished) {
         this.logger(`Response from ${shortId(peer.enr.nodeId)} arrived after lookup finished`)
@@ -192,22 +228,8 @@ export class ContentLookup {
         // findContent request returned ENRs of nodes closer to content
         this.logger(`received ${res.enrs.length} ENRs for closer nodes`)
         for (const enr of res.enrs) {
-          const decodedEnr = ENR.decode(enr as Uint8Array)
-          // // Skip if the node has an active uTP request
-          if (this.network.portal.uTP.hasRequests(decodedEnr.nodeId) === true) {
-            continue
-          }
-          if (!this.meta.has(decodedEnr.nodeId)) {
-            const dist = distance(decodedEnr.nodeId, this.contentId)
-            this.lookupPeers.push({ enr: decodedEnr, distance: Number(dist) })
-            this.meta.set('0x' + decodedEnr.nodeId, {
-              enr: decodedEnr.encodeTxt(),
-              distance: bigIntToHex(dist),
-            })
-            this.logger(
-              `Adding ${shortId(decodedEnr.nodeId)} to lookup queue (${this.lookupPeers.size()})`,
-            )
-          }
+          const decodedEnr = ENR.decode(enr)
+          this.addPeerToQueue(decodedEnr)
         }
         this.completedRequests &&
           this.completedRequests.set(
@@ -218,6 +240,9 @@ export class ContentLookup {
       }
     } catch (err) {
       this.pending.delete(peer.enr.encodeTxt())
+      if (signal?.aborted === true) {
+        this.logger(`Request to ${shortId(peer.enr.nodeId)} was cancelled`)
+      }
       throw err
     }
   }

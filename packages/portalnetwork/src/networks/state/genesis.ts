@@ -1,19 +1,18 @@
+import { type AccountState, type GethGenesis, parseGethGenesisState } from '@ethereumjs/common'
 import { LeafMPTNode, MerklePatriciaTrie as Trie } from '@ethereumjs/mpt'
 import {
+  type PrefixedHexString,
   bytesToHex,
   createAccount,
   equalsBytes,
   hexToBytes,
-  parseGethGenesisState,
 } from '@ethereumjs/util'
-
-import genesis from './mainnet.json' assert { type: 'json' }
+import genesis from './mainnet.json' with { type: 'json' }
 
 import type { MPTNode, Proof } from '@ethereumjs/mpt'
-import type { AccountState } from '@ethereumjs/util'
 
 const genesisAccounts = () => {
-  const parsed = parseGethGenesisState(genesis)
+  const parsed = parseGethGenesisState(genesis as unknown as GethGenesis)
   const gState = parsed as Record<string, AccountState>
   const accounts: [string, Uint8Array][] = Object.entries(gState).map(([address, [balance]]) => {
     return [
@@ -29,9 +28,11 @@ const genesisAccounts = () => {
 export const genesisStateTrie = async () => {
   const trie = new Trie({ useKeyHashing: true })
   for (const account of genesisAccounts()) {
-    await trie.put(hexToBytes(account[0]), account[1])
+    await trie.put(hexToBytes(account[0] as PrefixedHexString), account[1])
   }
-  if (equalsBytes(trie.root(), hexToBytes(genesis.genesisStateRoot)) === true) {
+  if (
+    equalsBytes(trie.root(), hexToBytes(genesis.genesisStateRoot as PrefixedHexString)) === true
+  ) {
     throw new Error('Invalid genesis state root')
   }
   return trie

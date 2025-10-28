@@ -17,7 +17,8 @@ import {
   BlockHeaderWithProof,
   BlockNumberKey,
   CAPELLA_ERA,
-  EphemeralHeaderKey,
+  EphemeralHeaderFindContentKey,
+  EphemeralHeaderOfferKey,
   EpochAccumulator,
   HistoryNetworkContentType,
   MERGE_BLOCK,
@@ -43,9 +44,13 @@ import type {
   TransactionsBytes,
   UncleHeadersBytes,
 } from '@ethereumjs/block'
-import type { WithdrawalBytes } from '@ethereumjs/util'
+import type { PrefixedHexString, WithdrawalBytes } from '@ethereumjs/util'
 import type { ForkConfig } from '@lodestar/config'
-import type { EphemeralHeaderKeyValues } from '../history/types.js'
+import type {
+  EphemeralHeaderKeyValues,
+  HistoricalSummariesBlockProof,
+  HistoricalSummariesBlockProofDeneb,
+} from '../history/types.js'
 import type { HistoryNetwork } from './history.js'
 import type { BlockBodyContent, Witnesses } from './types.js'
 
@@ -82,15 +87,22 @@ export const getContentKey = (
       encodedKey = BlockHeaderByNumberKey(key)
       break
     }
-    case HistoryNetworkContentType.EphemeralHeader: {
+    case HistoryNetworkContentType.EphemeralHeaderFindContent: {
       if (typeof key !== 'object' || !('blockHash' in key) || !('ancestorCount' in key))
         throw new Error('block hash and ancestor count are required to generate contentKey')
       encodedKey = Uint8Array.from([
         contentType,
-        ...EphemeralHeaderKey.serialize({
+        ...EphemeralHeaderFindContentKey.serialize({
           blockHash: key.blockHash,
           ancestorCount: key.ancestorCount,
         }),
+      ])
+      break
+    }
+    case HistoryNetworkContentType.EphemeralHeaderOffer: {
+      encodedKey = Uint8Array.from([
+        contentType,
+        ...EphemeralHeaderOfferKey.serialize({ blockHash: key as Uint8Array }),
       ])
       break
     }
@@ -127,6 +139,7 @@ export const decodeHistoryNetworkContentKey = (
         | HistoryNetworkContentType.BlockHeader
         | HistoryNetworkContentType.BlockBody
         | HistoryNetworkContentType.Receipt
+        | HistoryNetworkContentType.EphemeralHeaderOffer
       keyOpt: Uint8Array
     }
   | {
@@ -134,7 +147,7 @@ export const decodeHistoryNetworkContentKey = (
       keyOpt: bigint
     }
   | {
-      contentType: HistoryNetworkContentType.EphemeralHeader
+      contentType: HistoryNetworkContentType.EphemeralHeaderFindContent
       keyOpt: EphemeralHeaderKeyValues
     } => {
   const contentType: HistoryNetworkContentType = contentKey[0]
@@ -146,13 +159,15 @@ export const decodeHistoryNetworkContentKey = (
         keyOpt: blockNumber,
       }
     }
-    case HistoryNetworkContentType.EphemeralHeader: {
-      const key = EphemeralHeaderKey.deserialize(contentKey.slice(1))
+    case HistoryNetworkContentType.EphemeralHeaderFindContent: {
+      const key = EphemeralHeaderFindContentKey.deserialize(contentKey.slice(1))
       return {
         contentType,
         keyOpt: key,
       }
     }
+    case HistoryNetworkContentType.EphemeralHeader:
+      throw new Error('EphemeralHeader is only for internal use')
     default: {
       const blockHash = contentKey.slice(1)
       return {
@@ -163,10 +178,7 @@ export const decodeHistoryNetworkContentKey = (
   }
 }
 
-export const decodeSszBlockBody = (
-  sszBody: Uint8Array,
-  withdrawals: boolean = false,
-): BlockBodyContent => {
+export const decodeSszBlockBody = (sszBody: Uint8Array, withdrawals = false): BlockBodyContent => {
   if (withdrawals) {
     const body = PostShanghaiBlockBody.deserialize(sszBody)
     const txsRlp = body.allTransactions.map((sszTx) => sszTransactionType.deserialize(sszTx))
@@ -259,11 +271,14 @@ export const addRLPSerializedBlock = async (
   network: HistoryNetwork,
   proof: Uint8Array,
 ) => {
-  const block = createBlockFromRLP(hexToBytes(rlpHex), {
+  const block = createBlockFromRLP(hexToBytes(rlpHex as PrefixedHexString), {
     setHardfork: true,
   })
   const header = block.header
-  const headerKey = getContentKey(HistoryNetworkContentType.BlockHeader, hexToBytes(blockHash))
+  const headerKey = getContentKey(
+    HistoryNetworkContentType.BlockHeader,
+    hexToBytes(blockHash as PrefixedHexString),
+  )
   const headerProof = BlockHeaderWithProof.serialize({
     header: header.serialize(),
     proof,
@@ -288,7 +303,9 @@ export const blockNumberToLeafIndex = (blockNumber: bigint) => {
   return (Number(blockNumber) % 8192) * 2
 }
 export const epochRootByIndex = (index: number) => {
-  return historicalEpochs[index] ? hexToBytes(historicalEpochs[index]) : undefined
+  return historicalEpochs[index]
+    ? hexToBytes(historicalEpochs[index] as PrefixedHexString)
+    : undefined
 }
 export const epochRootByBlocknumber = (blockNumber: bigint) => {
   return epochRootByIndex(epochIndexByBlocknumber(blockNumber))
@@ -316,7 +333,7 @@ export const verifyPreMergeHeaderProof = (
       type: ProofType.single,
       gindex: blockNumberToGindex(blockNumber),
       witnesses,
-      leaf: hexToBytes(blockHash),
+      leaf: hexToBytes(blockHash as PrefixedHexString),
     }
     EpochAccumulator.createFromProof(proof, target)
     return true
@@ -325,7 +342,7 @@ export const verifyPreMergeHeaderProof = (
   }
 }
 
-export const verifyPreCapellaHeaderProof = (
+export const verifyHistoricalRootsHeaderProof = (
   proof: ValueOfFields<{
     beaconBlockProof: VectorCompositeType<ByteVectorType>
     beaconBlockRoot: ByteVectorType
@@ -348,7 +365,7 @@ export const verifyPreCapellaHeaderProof = (
   if (
     equalsBytes(
       reconstructedBatch.hashTreeRoot(),
-      hexToBytes(historicalRoots[Number(slotToHistoricalBatch(proof.slot))]),
+      hexToBytes(historicalRoots[Number(slotToHistoricalBatch(proof.slot))] as PrefixedHexString),
     ) === false
   )
     return false
@@ -369,13 +386,10 @@ export const verifyPreCapellaHeaderProof = (
   return true
 }
 
-export const verifyPostCapellaHeaderProof = (
-  proof: ValueOfFields<{
-    beaconBlockProof: ListCompositeType<ByteVectorType>
-    beaconBlockRoot: ByteVectorType
-    historicalSummariesProof: VectorCompositeType<ByteVectorType>
-    slot: UintBigintType
-  }>,
+export const verifyHistoricalSummariesHeaderProof = (
+  proof: ValueOfFields<
+    typeof HistoricalSummariesBlockProof.fields | typeof HistoricalSummariesBlockProofDeneb.fields
+  >,
   elBlockHash: Uint8Array,
   historicalSummaries: { blockSummaryRoot: Uint8Array; stateSummaryRoot: Uint8Array }[],
   chainConfig: ForkConfig,
@@ -386,7 +400,7 @@ export const verifyPostCapellaHeaderProof = (
     Number(eraIndex),
   ])
   const reconstructedBatch = ssz[forkName].BeaconState.fields.blockRoots.createFromProof({
-    witnesses: proof.historicalSummariesProof,
+    witnesses: proof.beaconBlockProof,
     type: ProofType.single,
     gindex: historicalSummariesPath.gindex,
     leaf: proof.beaconBlockRoot, // This should be the leaf value this proof is verifying
@@ -408,7 +422,7 @@ export const verifyPostCapellaHeaderProof = (
     'blockHash',
   ])
   const reconstructedBlock = ssz[forkName].BeaconBlock.createFromProof({
-    witnesses: proof.beaconBlockProof,
+    witnesses: proof.executionBlockProof,
     type: ProofType.single,
     gindex: elBlockHashPath.gindex,
     leaf: elBlockHash,
@@ -434,6 +448,6 @@ export const generatePreMergeHeaderProof = async (
     const proof = createProof(tree, proofInput) as SingleProof
     return proof.witnesses
   } catch (err: any) {
-    throw new Error('Error generating inclusion proof: ' + (err as any).message)
+    throw new Error('Error generating inclusion proof: ' + err.message)
   }
 }

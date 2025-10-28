@@ -1,11 +1,13 @@
-import type { IDiscv5CreateOptions } from '@chainsafe/discv5'
+import type { BindAddrs, IDiscv5CreateOptions } from '@chainsafe/discv5'
 import type { NodeId } from '@chainsafe/enr'
 import type { AbstractLevel } from 'abstract-level'
 
-import type { NetworkId } from '../index.js'
-import type { PortalNetworkRoutingTable } from './routingTable.js'
-import type { Multiaddr } from '@multiformats/multiaddr'
+import type { ITransportService } from '@chainsafe/discv5'
 import { ListBasicType, UintNumberType } from '@chainsafe/ssz'
+import type { Multiaddr } from '@multiformats/multiaddr'
+import type { NetworkId } from '../index.js'
+import type { IRateLimiter } from '../transports/rateLimiter.js'
+import type { PortalNetworkRoutingTable } from './routingTable.js'
 
 /** A representation of an unsigned contactable node. */
 export interface INodeAddress {
@@ -15,10 +17,27 @@ export interface INodeAddress {
   nodeId: NodeId
 }
 
-export interface PortalNetworkEvents {
-  NodeAdded: (nodeId: NodeId, networkId: NetworkId) => void
-  NodeRemoved: (nodeId: NodeId, networkId: NetworkId) => void
-  ContentAdded: (key: Uint8Array, contentType: number, content: string) => void
+type ContentAddedEventName = `${NetworkId}:ContentAdded`
+type ContentAddedEventType = (key: Uint8Array, content: Uint8Array) => Promise<void | { content: Uint8Array; utp: boolean }>
+type ContentAddedEvents = {
+  [K in ContentAddedEventName]: ContentAddedEventType
+}
+
+type NodeAddedEventName = `${NetworkId}:NodeAdded`
+type NodeAddedEventType = (nodeId: NodeId) => void
+type NodeAddedEvents = {
+  [K in NodeAddedEventName]: NodeAddedEventType
+}
+
+type NodeRemovedEventName = `${NetworkId}:NodeRemoved`
+type NodeRemovedEventType = (nodeId: NodeId) => void
+type NodeRemovedEvents = {
+  [K in NodeRemovedEventName]: NodeRemovedEventType
+}
+
+type NetworkEvents = ContentAddedEvents & NodeAddedEvents & NodeRemovedEvents
+
+export interface PortalNetworkEvents extends NetworkEvents {
   Verified: (key: Uint8Array, verified: boolean) => void
   SendTalkReq: (nodeId: string, requestId: string, payload: string) => void
   SendTalkResp: (nodeId: string, requestId: string, payload: string) => void
@@ -28,8 +47,29 @@ export enum TransportLayer {
   NODE = 'node',
   WEB = 'web',
   MOBILE = 'mobile',
+  TAURI = 'tauri',
 }
 
+export interface TransportServices {
+  createTauriTransport?: (
+    bindAddr: Multiaddr,
+    nodeId: string,
+    rateLimiter?: IRateLimiter,
+  ) => ITransportService
+
+  createWebSocketTransport?: (
+    bindAddr: Multiaddr,
+    nodeId: string,
+    proxyAddress: string,
+    rateLimiter?: IRateLimiter,
+  ) => ITransportService
+
+  createNodeTransport?: (
+    bindAddrs: BindAddrs,
+    nodeId: string,
+    rateLimiter?: IRateLimiter,
+  ) => ITransportService
+}
 export interface NetworkConfig {
   networkId: NetworkId
   maxStorage?: number
@@ -39,7 +79,14 @@ export interface NetworkConfig {
   }
 }
 
+export enum ChainId {
+  MAINNET = 'MAINNET',
+  SEPOLIA = 'SEPOLIA',
+  ANGELFOOD = 'ANGELFOOD',
+}
+
 export interface PortalNetworkOpts {
+  chainId?: ChainId
   shortCommit?: string
   operatingSystemAndCpuArchitecture?: string
   supportedNetworks?: NetworkConfig[]
@@ -59,6 +106,7 @@ export interface PortalNetworkOpts {
   shouldRefresh?: boolean
   gossipCount?: number
   supportedVersions?: number[]
+  transportServices?: TransportServices
 }
 
 export type RoutingTable = PortalNetworkRoutingTable

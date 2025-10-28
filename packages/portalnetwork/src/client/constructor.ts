@@ -1,22 +1,21 @@
-
-
-import { keys } from '@libp2p/crypto'
-import { hexToBytes } from '@ethereumjs/util'
-import { multiaddr } from '@multiformats/multiaddr'
-import { SignableENR } from '@chainsafe/enr'
 import { UDPTransportService } from '@chainsafe/discv5'
+import { SignableENR } from '@chainsafe/enr'
+import { type PrefixedHexString, hexToBytes } from '@ethereumjs/util'
+import { keys } from '@libp2p/crypto'
+import { multiaddr } from '@multiformats/multiaddr'
 
-import { NetworkId } from '../networks/index.js'
-import { CapacitorUDPTransportService, WebSocketTransportService } from '../transports/index.js'
+import { NetworkIdByChain } from '../networks/index.js'
 import { RateLimiter } from '../transports/rateLimiter.js'
 import { MEGABYTE } from '../util/index.js'
-import { TransportLayer } from './types.js'
 import { PortalNetwork } from './client.js'
+import { ChainId, TransportLayer } from './types.js'
 
-import type { IDiscv5CreateOptions, SignableENRInput } from '@chainsafe/discv5'
+import type { IDiscv5CreateOptions, ITransportService, SignableENRInput } from '@chainsafe/discv5'
 import type { PortalNetworkOpts } from './types.js'
 
-export async function createPortalNetwork(opts: Partial<PortalNetworkOpts>): Promise<PortalNetwork> {
+export async function createPortalNetwork(
+  opts: Partial<PortalNetworkOpts>,
+): Promise<PortalNetwork> {
   const defaultConfig: IDiscv5CreateOptions = {
     enr: opts.config?.enr ?? ({} as SignableENRInput),
     privateKey: opts.config?.privateKey ?? (await keys.generateKeyPair('secp256k1')),
@@ -41,7 +40,10 @@ export async function createPortalNetwork(opts: Partial<PortalNetworkOpts>): Pro
   if (opts.rebuildFromMemory === true && opts.db) {
     const prevEnrString = await opts.db.get('enr')
     const prevPrivateKey = await opts.db.get('privateKey')
-    config.enr = SignableENR.decodeTxt(prevEnrString, hexToBytes(prevPrivateKey))
+    config.enr = SignableENR.decodeTxt(
+      prevEnrString,
+      hexToBytes(prevPrivateKey as PrefixedHexString),
+    )
     const prev_peers = JSON.parse(await opts.db.get('peers')) as string[]
     bootnodes =
       opts.bootnodes && opts.bootnodes.length > 0 ? opts.bootnodes.concat(prev_peers) : prev_peers
@@ -71,52 +73,71 @@ export async function createPortalNetwork(opts: Partial<PortalNetworkOpts>): Pro
   } else {
     ma = opts.config.bindAddrs.ip4
   }
-  
+
   // Configure db size calculation
   let dbSize
   switch (opts.transport) {
     case TransportLayer.WEB:
-    case TransportLayer.MOBILE:
-      dbSize = async function () {
+      dbSize = async () => {
         const sizeEstimate = await window.navigator.storage.estimate()
         return sizeEstimate.usage !== undefined ? sizeEstimate.usage / MEGABYTE : 0
       }
       break
-    case TransportLayer.NODE:
     default:
       dbSize = opts.dbSize
   }
-  
-  // Configure transport layer
-  switch (opts.transport) {
-    case TransportLayer.WEB: {
-      opts.proxyAddress = opts.proxyAddress ?? 'ws://127.0.0.1:5050'
-      config.transport = new WebSocketTransportService(
-        ma,
-        config.enr.nodeId,
-        opts.proxyAddress,
-        new RateLimiter(),
-      )
-      break
+
+  let transportService: ITransportService
+
+  if (opts.transportServices !== undefined) {
+    switch (opts.transport) {
+      case TransportLayer.WEB:
+        {
+          if (opts.transportServices.createWebSocketTransport === undefined) {
+            throw new Error('WebSocket transport service not provided')
+          }
+          const proxyAddress = opts.proxyAddress ?? 'ws://127.0.0.1:5050'
+          transportService = opts.transportServices.createWebSocketTransport(
+            ma,
+            config.enr.nodeId,
+            proxyAddress,
+            new RateLimiter(),
+          )
+        }
+        break
+      case TransportLayer.TAURI:
+        if (opts.transportServices.createTauriTransport === undefined) {
+          throw new Error('Tauri transport service not provided')
+        }
+        transportService = opts.transportServices.createTauriTransport(ma, config.enr.nodeId)
+        break
+      default:
+        if (opts.transportServices.createNodeTransport === undefined) {
+          throw new Error('Node transport service not provided')
+        }
+        transportService = opts.transportServices.createNodeTransport(
+          config.bindAddrs,
+          config.enr.nodeId,
+          new RateLimiter(),
+        )
+        break
     }
-    case TransportLayer.MOBILE:
-      config.transport = new CapacitorUDPTransportService(ma, config.enr.nodeId)
-      break
-    case TransportLayer.NODE:
-      config.transport = new UDPTransportService({
-        bindAddrs: config.bindAddrs,
-        nodeId: config.enr.nodeId,
-        rateLimiter: new RateLimiter(),
-      })
-      break
+  } else {
+    transportService = new UDPTransportService({
+      bindAddrs: config.bindAddrs,
+      nodeId: config.enr.nodeId,
+      rateLimiter: new RateLimiter(),
+    })
   }
+
+  config.transport = transportService
 
   const portal = new PortalNetwork({
     config,
     bootnodes,
     db: opts.db,
     supportedNetworks: opts.supportedNetworks ?? [
-      { networkId: NetworkId.HistoryNetwork, maxStorage: 1024 },
+      { networkId: NetworkIdByChain[opts.chainId ?? ChainId.MAINNET].HistoryNetwork, maxStorage: 1024 },
     ],
     dbSize: dbSize as () => Promise<number>,
     metrics: opts.metrics,
@@ -128,6 +149,7 @@ export async function createPortalNetwork(opts: Partial<PortalNetworkOpts>): Pro
     operatingSystemAndCpuArchitecture: opts.operatingSystemAndCpuArchitecture,
     shortCommit: opts.shortCommit,
     supportedVersions: opts.supportedVersions,
+    transportServices: opts.transportServices,
   })
   for (const network of portal.networks.values()) {
     try {
