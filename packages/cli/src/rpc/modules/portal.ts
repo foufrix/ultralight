@@ -35,7 +35,7 @@ import type { GetEnrResult } from '../schema/types.js'
  * @param contentKeysLength The number of content keys that were offered
  * @returns Object with success array, declined flag, or failed flag
  */
-function bitToBooleanArray(res: any, contentKeysLength: number): { success?: boolean[]; declined?: boolean; failed?: boolean } {
+function bitToBooleanArray(res: BitArray, contentKeysLength: number): { success?: boolean[]; declined?: boolean; failed?: boolean } {
   if (res === undefined) {
     return { declined: true }
   }
