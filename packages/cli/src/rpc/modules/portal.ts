@@ -30,7 +30,6 @@ import type { BeaconNetwork, HistoryNetwork, PortalNetwork, StateNetwork } from 
 import type { GetEnrResult } from '../schema/types.js'
 
 
-
 const methods = [
   // state
   'portal_stateAddEnr',
