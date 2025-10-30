@@ -22,3 +22,33 @@ export function callWithStackTrace(handler: Function, debug: boolean) {
     }
   }
 }
+
+/**
+ * Converts a BitArray response to a boolean array indicating which content keys were accepted
+ * @param res The response from sendOffer (can be BitArray, undefined, or empty array)
+ * @param contentKeysLength The number of content keys that were offered
+ * @returns Object with success array, declined flag, or failed flag
+ */
+export function bitToBooleanArray(res: any, contentKeysLength: number): { success?: boolean[]; declined?: boolean; failed?: boolean } {
+  if (res === undefined) {
+    return { declined: true }
+  }
+
+  if (Array.isArray(res) && res.length === 0) {
+    return { declined: true }
+  }
+
+  // If res is a BitArray, convert it to boolean array
+  if (res !== undefined && res !== null && typeof res === 'object' && 'getTrueBitIndexes' in res) {
+    const acceptedBits = (res as any).getTrueBitIndexes()
+    const successArray = new Array(contentKeysLength).fill(false)
+    acceptedBits.forEach((index: number) => {
+      if (index < contentKeysLength) {
+        successArray[index] = true
+      }
+    })
+    return { success: successArray }
+  }
+
+  return { success: new Array(contentKeysLength).fill(true) }
+}
