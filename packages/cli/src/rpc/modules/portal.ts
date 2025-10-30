@@ -20,7 +20,7 @@ import {
 
 import { BEACON_CLIENT_NOT_INITIALIZED, CONTENT_NOT_FOUND, INVALID_PARAMS } from '../error-code.js'
 import { content_params } from '../schema/index.js'
-import { bitToBooleanArray, callWithStackTrace, isValidId } from '../util.js'
+import { Uint8toBooleanArray, bitToBooleanArray, callWithStackTrace, isValidId } from '../util.js'
 import { middleware, validators } from '../validators.js'
 
 import { BitArray } from '@chainsafe/ssz'
@@ -1260,7 +1260,16 @@ export class portal {
       }
 
       const res = await this._history.sendOffer(enr, contentKeys, contentValues)
-      return bitToBooleanArray(res, contentKeys.length)
+      if (res === undefined || res === null || Array.isArray(res) && res.length === 0) {
+        return { declined: true }
+      }
+      if (res instanceof BitArray) {
+        return bitToBooleanArray(res, contentKeys.length)
+      }
+      if (res instanceof Uint8Array) {
+        return Uint8toBooleanArray(res, contentKeys.length)
+      }
+      return { failed: true }
     } catch (error) {
       this.logger(`historyTraceOffer failed: ${error}`)
       return { failed: true }
@@ -1284,7 +1293,16 @@ export class portal {
       }
 
       const res = await this._state.sendOffer(enr, contentKeys, contentValues)
-      return bitToBooleanArray(res, contentKeys.length)
+      if (res === undefined || res === null || Array.isArray(res) && res.length === 0) {
+        return { declined: true }
+      }
+      if (res instanceof BitArray) {
+        return bitToBooleanArray(res, contentKeys.length)
+      }
+      if (res instanceof Uint8Array) {
+        return Uint8toBooleanArray(res, contentKeys.length)
+      }
+      return { failed: true }
     } catch (error) {
       this.logger(`stateTraceOffer failed: ${error}`)
       return { failed: true }
@@ -1308,7 +1326,16 @@ export class portal {
       }
 
       const res = await this._beacon.sendOffer(enr, contentKeys, contentValues)
-      return bitToBooleanArray(res, contentKeys.length)
+      if (res === undefined || res === null || Array.isArray(res) && res.length === 0) {
+        return { declined: true }
+      }
+      if (res instanceof BitArray) {
+        return bitToBooleanArray(res, contentKeys.length)
+      }
+      if (res instanceof Uint8Array) {
+        return Uint8toBooleanArray(res, contentKeys.length)
+      }
+      return { failed: true }
     } catch (error) {
       this.logger(`beaconTraceOffer failed: ${error}`)
       return { failed: true }
