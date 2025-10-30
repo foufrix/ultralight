@@ -78,11 +78,9 @@ describe(`${method} tests`, () => {
 
       // Should return success with boolean array indicating which keys were accepted
       assert.ok(res.result.success !== undefined, 'should have success array')
-      if (res.result.success === true) {
-        assert.ok(Array.isArray(res.result.success), 'success should be an array')
-        const acceptedCount = res.result.success.filter((x: boolean) => x).length
-        assert.ok(acceptedCount > 0, 'at least one content key should be accepted')
-      }
+      assert.ok(Array.isArray(res.result.success), 'success should be an array')
+      const acceptedCount = res.result.success.filter((x: boolean) => x).length
+      assert.ok(acceptedCount > 0, 'at least one content key should be accepted')
     } catch (error) {
       console.log('Trace offer success error:', error)
       assert.ok(false, 'error is unacceptable for success test')
