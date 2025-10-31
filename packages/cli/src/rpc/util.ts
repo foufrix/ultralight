@@ -50,11 +50,8 @@ export function bitToBooleanArray(resBitArray: BitArray, contentKeysLength: numb
 export function Uint8toBooleanArray(res: Uint8Array, contentKeysLength: number): { success: boolean[] } {
   const successArray = new Array(contentKeysLength).fill(false)
   for (let i = 0; i < contentKeysLength; i++) {
-    const byteIndex = Math.floor(i / 8)
-    const bitIndex = i % 8
-    const byte = res[byteIndex]
     if (byte !== undefined) {
-      successArray[i] = ((byte >> bitIndex) & 1) === 1
+      successArray[i] = AcceptCode.ACCEPT
     }
   }
   return { success: successArray }
